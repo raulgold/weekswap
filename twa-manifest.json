@@ -1,0 +1,33 @@
+{
+  "packageId": "com.weekswap.app",
+  "host": "weekswap-4c7d0.web.app",
+  "name": "WeekSwap",
+  "launcherName": "WeekSwap",
+  "display": "standalone",
+  "themeColor": "#10b981",
+  "navigationColor": "#0f172a",
+  "backgroundColor": "#0f172a",
+  "startUrl": "/",
+  "iconUrl": "https://weekswap-4c7d0.web.app/icon-512.png",
+  "maskableIconUrl": "https://weekswap-4c7d0.web.app/icon-512.png",
+  "monochromeIconUrl": "https://weekswap-4c7d0.web.app/icon-512.png",
+  "shortcuts": [],
+  "signingKey": {
+    "path": "./android.keystore",
+    "alias": "weekswap"
+  },
+  "webManifestUrl": "https://weekswap-4c7d0.web.app/manifest.json",
+  "fallbackType": "customtabs",
+  "features": {},
+  "enableNotifications": false,
+  "generatorApp": "bubblewrap-cli",
+  "minSdkVersion": 19,
+  "targetSdkVersion": 34,
+  "isChromeOSOnly": false,
+  "isMetaQuest": false,
+  "fullScopeUrl": "https://weekswap-4c7d0.web.app/",
+  "appVersion": "1",
+  "appVersionName": "1.0.0",
+  "orientation": "default",
+  "includeSourceCode": false
+}
