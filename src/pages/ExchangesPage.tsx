@@ -6,6 +6,7 @@ import {
   ExternalLink, Copy, Smartphone
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { useGeo } from '../lib/GeoContext';
 
 interface ExchangesPageProps {
   userId: string;
@@ -19,6 +20,7 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
 };
 
 export function ExchangesPage({ userId }: ExchangesPageProps) {
+  const { country, EXCHANGE_FEE_PTS, EXCHANGE_FEE_LABEL } = useGeo();
   const [exchanges, setExchanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
@@ -71,10 +73,13 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
   };
 
   const handleComplete = async (exchangeId: string) => {
-    if (!confirm('Confirma a finalização desta troca? Os créditos serão liberados.')) return;
+    const feeMsg = country === 'BR'
+      ? `Taxa WeekSwap: R$100 (10.000 pts) será debitada da sua conta.`
+      : `Taxa WeekSwap: USD 50 (25.500 pts) será debitada da sua conta.`;
+    if (!confirm(`Confirma a finalização desta troca?\n\n${feeMsg}\n\nOs créditos serão liberados após a dedução da taxa.`)) return;
     setActionLoading(exchangeId + '_complete');
     try {
-      await api.completeExchange(userId, exchangeId);
+      await api.completeExchange(userId, exchangeId, country);
       fetchExchanges();
     } catch (err: any) {
       alert(err.message || 'Erro ao finalizar troca');
@@ -211,19 +216,16 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
 
                   {/* Detalhes financeiros (se finalizada) */}
                   {exchange.exchange_status === 'FINALIZED' && (
-                    <div className="bg-emerald-50 rounded-xl p-4 mb-4 grid grid-cols-3 gap-4 text-center">
-                      <div>
-                        <p className="text-xs text-gray-500">Total</p>
-                        <p className="font-black text-gray-900">R$ {((exchange.commission_amount || 0) + (exchange.owner_amount || 0)).toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Taxa WeekSwap (10%)</p>
-                        <p className="font-bold text-amber-600">R$ {(exchange.commission_amount || 0).toFixed(2)}</p>
-                      </div>
-                      <div>
-                        <p className="text-xs text-gray-500">Créditos recebidos</p>
-                        <p className="font-bold text-emerald-600">R$ {(exchange.owner_amount || 0).toFixed(2)}</p>
-                      </div>
+                    <div className="bg-emerald-50 rounded-xl p-4 mb-4 text-center">
+                      <p className="text-xs text-gray-500 mb-1">Taxa de finalização cobrada</p>
+                      <p className="font-black text-amber-600 text-lg">
+                        {exchange.fee_pts
+                          ? `${Number(exchange.fee_pts).toLocaleString('pt-BR')} pts`
+                          : '10.000 pts'}
+                      </p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {exchange.fee_country === 'BR' ? 'R$100 — Brasil' : 'USD 50 — Internacional'}
+                      </p>
                     </div>
                   )}
 
@@ -292,10 +294,16 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                             <div className="space-y-3">
                               <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">
                                 <p className="font-bold mb-1">✅ Troca confirmada!</p>
-                                {isOwner
-                                  ? <p>Aguarde o solicitante realizar o pagamento. Após confirmado, finalize a entrega.</p>
-                                  : <p>Realize o pagamento do valor da troca para finalizar. O proprietário confirmará a entrega.</p>
-                                }
+                                {isOwner ? (
+                                  <>
+                                    <p>Confirme a entrega quando tudo estiver resolvido.</p>
+                                    <p className="mt-1 text-xs text-amber-700 font-semibold">
+                                      Taxa de finalização: {EXCHANGE_FEE_LABEL} ({EXCHANGE_FEE_PTS.toLocaleString('pt-BR')} pts) será debitada da sua conta.
+                                    </p>
+                                  </>
+                                ) : (
+                                  <p>Aguardando o proprietário confirmar a entrega. Se precisar comprar pontos para cobrir o diferencial, vá em "Semanas".</p>
+                                )}
                               </div>
 
                               {!isOwner && (
@@ -390,7 +398,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                         className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                       />
                       <p className="text-xs text-gray-400 mt-1">
-                        Taxa WeekSwap (10%): R$ {(payAmount * 0.1).toFixed(2)} · Valor ao proprietário: R$ {(payAmount * 0.9).toFixed(2)}
+                        Compra de pontos para cobrir diferencial de semanas
                       </p>
                     </div>
 
@@ -550,12 +558,13 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                     <span className="font-bold">{ex.requested_week_id?.slice(0, 8)}</span>
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-500">Taxa de serviço (10%)</span>
-                    <span className="font-bold text-amber-600">R$ {(ex.commission_amount || 0).toFixed(2)}</span>
-                  </div>
-                  <div className="flex justify-between py-2 border-b border-gray-100">
-                    <span className="text-gray-500">Créditos ao proprietário</span>
-                    <span className="font-bold text-emerald-600">R$ {(ex.owner_amount || 0).toFixed(2)}</span>
+                    <span className="text-gray-500">Taxa WeekSwap</span>
+                    <span className="font-bold text-amber-600">
+                      {ex.fee_pts
+                        ? `${Number(ex.fee_pts).toLocaleString('pt-BR')} pts`
+                        : '10.000 pts'}
+                      {' '}({ex.fee_country === 'INTERNATIONAL' ? 'USD 50' : 'R$100'})
+                    </span>
                   </div>
                   <div className="flex justify-between py-2">
                     <span className="text-gray-500">Status</span>

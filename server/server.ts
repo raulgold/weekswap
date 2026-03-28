@@ -121,8 +121,10 @@ function labelPontosSemana(pontos: number): string {
   return 'Economica';
 }
 
-// Taxa fixa de finalizacao de troca: 10.000 pontos = R$100
-const EXCHANGE_FEE = 10000;
+// Taxa fixa de finalizacao por pais
+// Brasil: R$100 = 10.000 pts | Internacional: USD 50 = 25.500 pts (USD_TO_BRL = 5.10)
+const EXCHANGE_FEE_BRL = 10000;
+const EXCHANGE_FEE_INT = 25500;
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
@@ -406,14 +408,27 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
         requested_week_id: requestedWeekId,
         req_points: reqPts,
         owner_points: ownerPts,
-        exchange_fee: EXCHANGE_FEE, // taxa fixa que sera cobrada na finalizacao
+        exchange_fee_brl: EXCHANGE_FEE_BRL,
+        exchange_fee_int: EXCHANGE_FEE_INT,
         exchange_status: 'pending',
         exchange_locked: false,
         created_at: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
 
-    res.json({ success: true, exchangeId, exchangeFee: EXCHANGE_FEE });
+    // Diferencial de pontos (para o frontend informar o solicitante)
+    // Calculado fora da transacao mas os valores ja estao salvos no doc
+    const exDoc = await db.collection('exchanges').doc(exchangeId).get();
+    const exData = exDoc.data()!;
+    const differential = (exData.owner_points || 0) - (exData.req_points || 0); // positivo = solicitante precisa comprar pts
+
+    res.json({
+      success: true,
+      exchangeId,
+      differential,                 // pts que o solicitante precisara comprar (se > 0)
+      feeBRL: EXCHANGE_FEE_BRL,
+      feeINT: EXCHANGE_FEE_INT,
+    });
   } catch (error: any) {
     console.error('Erro ao iniciar troca:', error);
     const status = error.statusCode || 500;
@@ -490,11 +505,16 @@ app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) =
   }
 });
 
-// Finalizar troca - cobra taxa fixa de R$100 (10.000 pts) do dono
+// Finalizar troca - cobra taxa por pais (BR: R$100 = 10.000 pts | INT: USD50 = 25.500 pts)
 app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
-    const { userId, exchangeId } = req.body;
+    const { userId, exchangeId, country } = req.body;
     if (!exchangeId) return res.status(400).json({ error: 'exchangeId e obrigatorio' });
+
+    // Determinar taxa pelo pais do solicitante
+    const userCountry: string = (country === 'INTERNATIONAL') ? 'INTERNATIONAL' : 'BR';
+    const feeAmount: number = userCountry === 'INTERNATIONAL' ? EXCHANGE_FEE_INT : EXCHANGE_FEE_BRL;
+    const feeLabel: string  = userCountry === 'INTERNATIONAL' ? 'USD 50 (25.500 pts)' : 'R$100 (10.000 pts)';
 
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
@@ -507,8 +527,6 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
     if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode finalizar a troca' });
     if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
 
-    const feeAmount: number = exData.exchange_fee || EXCHANGE_FEE;
-
     await db.runTransaction(async (transaction) => {
       const freshExchange = await transaction.get(exchangeRef);
       if (freshExchange.data()?.exchange_locked) throw new Error('Troca foi travada durante o processamento');
@@ -520,12 +538,16 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
 
       if (ownerBalance < feeAmount) {
         throw Object.assign(
-          new Error(`Saldo insuficiente para pagar a taxa de finalizacao. Voce precisa de ${feeAmount} pontos (R$${feeAmount / POINTS_PER_REAL}) mas tem ${ownerBalance} pontos.`),
+          new Error(
+            `Saldo insuficiente para pagar a taxa de finalizacao (${feeLabel}). ` +
+            `Voce tem ${ownerBalance} pts mas precisa de ${feeAmount} pts. ` +
+            `Compre ${feeAmount - ownerBalance} pts para continuar.`
+          ),
           { statusCode: 402 }
         );
       }
 
-      // Cobrar taxa de finalizacao do dono (R$100 = 10.000 pts)
+      // Cobrar taxa de finalizacao do dono
       transaction.update(ownerRef, {
         credits_balance: admin.firestore.FieldValue.increment(-feeAmount),
       });
@@ -535,6 +557,9 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
         exchange_status: 'FINALIZED',
         exchange_locked: true,
         fee_charged: feeAmount,
+        fee_pts: feeAmount,
+        fee_country: userCountry,
+        fee_label: feeLabel,
         fee_payer: userId,
         finalized_at: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -553,6 +578,7 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
       await logAudit('EXCHANGE_FINALIZED', userId, {
         exchange_id: exchangeId,
         fee_amount: feeAmount,
+        fee_country: userCountry,
         owner_id: exData.owner_id,
         requester_id: exData.requester_id,
         req_points: exData.req_points || 0,
@@ -564,7 +590,7 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
 
     res.json({
       success: true,
-      data: { exchangeId, feeAmount },
+      data: { exchangeId, feeAmount, feeLabel, feeCountry: userCountry },
     });
   } catch (error: any) {
     console.error('Erro ao finalizar troca:', error);

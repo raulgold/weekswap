@@ -47,10 +47,10 @@ export const api = {
       body: JSON.stringify({ userId, offeredWeekId, requestedWeekId }),
     }),
 
-  completeExchange: (userId: string, exchangeId: string) =>
+  completeExchange: (userId: string, exchangeId: string, country: string = 'BR') =>
     request<{ success: boolean; data: any }>('/api/complete-exchange', {
       method: 'POST',
-      body: JSON.stringify({ userId, exchangeId }),
+      body: JSON.stringify({ userId, exchangeId, country }),
     }),
 
   confirmExchange: (userId: string, exchangeId: string) =>
