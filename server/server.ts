@@ -1,6 +1,5 @@
 import express from 'express';
 import cors from 'cors';
-import Stripe from 'stripe';
 import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { config } from 'dotenv';
@@ -15,7 +14,6 @@ const admin = require('firebase-admin');
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ ConfiguraÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const app = express();
 const PORT = process.env.PORT || 3001;
-const COMMISSION_RATE = 0.10; // 10% de comissÃƒÂ£o
 const POINTS_PER_REAL = 100;  // R$1 = 100 pontos (estilo RCI)
 const GOLD_MODE_PRICE = 200;  // R$200 para Modo Ouro
 const GOLD_MODE_DAYS = 30;    // Modo Ouro valido por 30 dias
@@ -30,11 +28,6 @@ admin.initializeApp({
 });
 const db = admin.firestore();
 
-// Stripe
-const stripe = new Stripe(process.env.STRIPE_SECRET_KEY!, {
-  apiVersion: '2024-10-28.acacia' as Stripe.LatestApiVersion,
-});
-const endpointSecret = process.env.STRIPE_WEBHOOK_SECRET!;
 
 // Asaas
 const ASAAS_API_KEY = process.env.ASAAS_API_KEY!;
@@ -147,50 +140,6 @@ const paymentLimiter = rateLimit({
 // CORS
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
 app.use('/api', generalLimiter);
-
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Webhook do Stripe (DEVE vir ANTES do express.json global) Ã¢â€â‚¬Ã¢â€â‚¬
-// O Stripe exige o body raw para validar a assinatura
-app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
-  const sig = req.headers['stripe-signature'] as string;
-
-  let event: Stripe.Event;
-  try {
-    event = stripe.webhooks.constructEvent(req.body, sig, endpointSecret);
-  } catch (err: any) {
-    console.error('Webhook signature verification failed:', err.message);
-    return res.status(400).json({ error: `Webhook Error: ${err.message}` });
-  }
-
-  try {
-    switch (event.type) {
-      case 'checkout.session.completed': {
-        const session = event.data.object as Stripe.Checkout.Session;
-        await handleCheckoutCompleted(session);
-        break;
-      }
-
-      case 'charge.dispute.created': {
-        const dispute = event.data.object as Stripe.Dispute;
-        await handleDisputeCreated(dispute);
-        break;
-      }
-
-      case 'charge.dispute.closed': {
-        const dispute = event.data.object as Stripe.Dispute;
-        await handleDisputeClosed(dispute);
-        break;
-      }
-
-      default:
-        console.log(`Evento nÃƒÂ£o tratado: ${event.type}`);
-    }
-
-    res.json({ received: true });
-  } catch (error) {
-    console.error('Erro ao processar webhook:', error);
-    res.status(500).json({ error: 'Erro interno ao processar evento' });
-  }
-});
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Middleware de VerificaÃƒÂ§ÃƒÂ£o Firebase Auth Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const verifyToken = async (
@@ -397,6 +346,25 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
         check_in: rData.check_in || '', check_out: rData.check_out || '',
         docs_verified: rData.docs_verified || false,
       });
+
+      // Validacao de diferencial: solicitante precisa ter pontos suficientes
+      const differential = ownerPts - reqPts;
+      if (differential > 0) {
+        const requesterRef = db.collection('users').doc(userId);
+        const requesterDoc = await transaction.get(requesterRef);
+        const creditsBalance = requesterDoc.data()?.credits_balance || 0;
+        if (creditsBalance < differential) {
+          const faltam = differential - creditsBalance;
+          throw Object.assign(
+            new Error(
+              `Saldo insuficiente para cobrir o diferencial de pontos. ` +
+              `Voce precisa de ${differential.toLocaleString('pt-BR')} pts mas tem ${creditsBalance.toLocaleString('pt-BR')} pts. ` +
+              `Compre mais ${faltam.toLocaleString('pt-BR')} pontos antes de solicitar esta troca.`
+            ),
+            { statusCode: 400, differential, creditsBalance, faltam }
+          );
+        }
+      }
 
       // Marcar semana solicitada como em negociacao
       transaction.update(requestedWeekRef, { status: 'pending_exchange' });
@@ -710,50 +678,6 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
   } catch (error: any) {
     console.error('Erro ao verificar complete-exchange:', error);
     res.status(500).json({ error: error.message || 'Erro' });
-  }
-});
-
-// Criar sessÃƒÂ£o de checkout do Stripe
-app.post('/api/create-checkout-session', express.json(), checkRiskLocked, async (req, res) => {
-  try {
-    const { userId, creditAmount, exchangeId } = req.body;
-
-    if (!creditAmount || creditAmount <= 0) {
-      return res.status(400).json({ error: 'Valor de crÃƒÂ©ditos invÃƒÂ¡lido' });
-    }
-
-    // PreÃƒÂ§o em centavos (R$1 = 100 centavos)
-    const unitPrice = 100;
-
-    const session = await stripe.checkout.sessions.create({
-      payment_method_types: ['card'],
-      line_items: [
-        {
-          price_data: {
-            currency: 'brl',
-            product_data: {
-              name: 'CrÃƒÂ©ditos WeekSwap',
-              description: `${creditAmount} crÃƒÂ©ditos para trocas`,
-            },
-            unit_amount: unitPrice,
-          },
-          quantity: creditAmount,
-        },
-      ],
-      mode: 'payment',
-      success_url: `${process.env.CLIENT_URL}/success?session_id={CHECKOUT_SESSION_ID}`,
-      cancel_url: `${process.env.CLIENT_URL}/cancel`,
-      metadata: {
-        userId,
-        creditAmount: String(creditAmount),
-        exchangeId: exchangeId || '',
-      },
-    });
-
-    res.json({ sessionId: session.id, url: session.url });
-  } catch (error) {
-    console.error('Erro ao criar sessÃƒÂ£o de checkout:', error);
-    res.status(500).json({ error: 'Erro ao criar sessÃƒÂ£o de pagamento' });
   }
 });
 
@@ -1290,159 +1214,6 @@ app.get('/api/user/:userId', async (req, res) => {
   }
 });
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Handlers do Webhook Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-
-async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
-  const userId = session.metadata?.userId;
-  const creditAmount = parseInt(session.metadata?.creditAmount || '0', 10);
-  const exchangeId = session.metadata?.exchangeId;
-
-  if (!userId || !creditAmount) {
-    console.error('Metadata invÃƒÂ¡lida no checkout:', session.metadata);
-    return;
-  }
-
-  // Para cartÃƒÂ£o Stripe, payment_status === 'paid' significa pagamento confirmado imediatamente
-  const isPaid = session.payment_status === 'paid';
-
-  const batch = db.batch();
-
-  // Criar registro do lote de crÃƒÂ©ditos
-  const creditBatchRef = db.collection('credit_batches').doc();
-  batch.set(creditBatchRef, {
-    user_id: userId,
-    amount: creditAmount,
-    status: isPaid ? 'AVAILABLE' : 'PENDING_CLEARANCE',
-    stripe_session_id: session.id,
-    stripe_payment_intent: session.payment_intent,
-    confirmed_at: isPaid ? admin.firestore.FieldValue.serverTimestamp() : null,
-    created_at: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  const userRef = db.collection('users').doc(userId);
-  if (isPaid) {
-    // Pagamento confirmado: creditar saldo disponÃƒÂ­vel
-    batch.update(userRef, {
-      credits_balance: admin.firestore.FieldValue.increment(creditAmount),
-    });
-  } else {
-    // Pagamento pendente (boleto, etc.)
-    batch.update(userRef, {
-      pending_credits: admin.firestore.FieldValue.increment(creditAmount),
-    });
-  }
-
-  // Se associado a uma troca, criar escrow (idempotente)
-  if (exchangeId) {
-    const escrowRef = db.collection('escrows').doc(exchangeId);
-    const escrowSnap = await escrowRef.get();
-    if (!escrowSnap.exists) {
-      batch.set(escrowRef, {
-        exchange_id: exchangeId,
-        amount: creditAmount,
-        payer_id: userId,
-        status: 'held',
-        created_at: admin.firestore.FieldValue.serverTimestamp(),
-      });
-    }
-  }
-
-  await batch.commit();
-  await logAudit(isPaid ? 'PAYMENT_STRIPE_CONFIRMED' : 'PAYMENT_STRIPE_PENDING', userId, {
-    stripe_session_id: session.id,
-    credit_amount: creditAmount,
-    exchange_id: exchangeId || null,
-  });
-  console.log(`Checkout Stripe: ${creditAmount} crÃƒÂ©ditos para ${userId} (${isPaid ? 'DISPONÃƒÂVEIS' : 'PENDENTES'})`);
-}
-
-async function handleDisputeCreated(dispute: Stripe.Dispute) {
-  const paymentIntent = dispute.payment_intent as string;
-
-  // Localizar o lote de crÃƒÂ©ditos pelo payment intent
-  const batchQuery = await db
-    .collection('credit_batches')
-    .where('stripe_payment_intent', '==', paymentIntent)
-    .limit(1)
-    .get();
-
-  if (batchQuery.empty) {
-    console.error('Lote de crÃƒÂ©ditos nÃƒÂ£o encontrado para dispute:', paymentIntent);
-    return;
-  }
-
-  const batchDoc = batchQuery.docs[0];
-  const batchData = batchDoc.data();
-  const userId = batchData.user_id;
-  const amount = batchData.amount;
-  const userRef = db.collection('users').doc(userId);
-
-  // BLOQUEIA A CONTA IMEDIATAMENTE
-  const updateData: Record<string, any> = {
-    account_status: 'RISK_LOCKED',
-    risk_locked_at: admin.firestore.FieldValue.serverTimestamp(),
-    risk_reason: 'chargeback_dispute',
-    dispute_id: dispute.id,
-  };
-
-  // Reverter crÃƒÂ©ditos com base no status do lote
-  if (batchData.status === 'AVAILABLE') {
-    updateData.credits_balance = admin.firestore.FieldValue.increment(-amount);
-  } else if (batchData.status === 'PENDING_CLEARANCE') {
-    updateData.pending_credits = admin.firestore.FieldValue.increment(-amount);
-  }
-
-  await userRef.update(updateData);
-
-  // Marcar o lote como disputado
-  await batchDoc.ref.update({
-    status: 'DISPUTED',
-    dispute_id: dispute.id,
-    disputed_at: admin.firestore.FieldValue.serverTimestamp(),
-  });
-
-  await logAudit('CHARGEBACK_DISPUTE_CREATED', userId, {
-    dispute_id: dispute.id,
-    amount_reversed: amount,
-    batch_status: batchData.status,
-  });
-  console.log(`CONTA BLOQUEADA: ${userId} por disputa ${dispute.id}`);
-}
-
-async function handleDisputeClosed(dispute: Stripe.Dispute) {
-  const paymentIntent = dispute.payment_intent as string;
-
-  const batchQuery = await db
-    .collection('credit_batches')
-    .where('stripe_payment_intent', '==', paymentIntent)
-    .limit(1)
-    .get();
-
-  if (batchQuery.empty) return;
-
-  const batchDoc = batchQuery.docs[0];
-  const batchData = batchDoc.data();
-
-  if (dispute.status === 'won') {
-    // Plataforma ganhou a disputa - restaurar crÃƒÂ©ditos
-    const userRef = db.collection('users').doc(batchData.user_id);
-    await userRef.update({
-      credits_balance: admin.firestore.FieldValue.increment(batchData.amount),
-    });
-
-    await batchDoc.ref.update({
-      status: 'AVAILABLE',
-      dispute_resolved_at: admin.firestore.FieldValue.serverTimestamp(),
-    });
-
-    await logAudit('CHARGEBACK_DISPUTE_WON', batchData.user_id, {
-      dispute_id: dispute.id,
-      amount_restored: batchData.amount,
-    });
-    console.log(`Disputa vencida: crÃƒÂ©ditos restaurados para ${batchData.user_id}`);
-  }
-}
-
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Audit Log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 async function logAudit(action: string, userId: string, data: Record<string, any>) {
@@ -1515,6 +1286,67 @@ async function updateGlobalStats(commissionAmount: number, exchangeCount: number
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ InicializaÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+// Auto-cancelamento de trocas pendentes (chamado pela tarefa agendada)
+// Cancela trocas com status 'pending' ou 'confirmed' criadas ha mais de 48h
+// Rota protegida por token interno (CRON_SECRET no env)
+app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
+  try {
+    const cronSecret = process.env.CRON_SECRET;
+    if (cronSecret) {
+      const incomingSecret = req.headers['x-cron-secret'] as string;
+      if (incomingSecret !== cronSecret) {
+        return res.status(401).json({ error: 'Unauthorized' });
+      }
+    }
+
+    const cutoff = new Date();
+    cutoff.setHours(cutoff.getHours() - 48); // 48 horas atras
+    const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
+
+    const staleQuery = await db.collection('exchanges')
+      .where('exchange_status', 'in', ['pending', 'confirmed'])
+      .where('created_at', '<=', cutoffTs)
+      .limit(50)
+      .get();
+
+    if (staleQuery.empty) {
+      return res.json({ cancelled: 0, message: 'Nenhuma troca vencida encontrada' });
+    }
+
+    let cancelled = 0;
+    const batch = db.batch();
+
+    for (const doc of staleQuery.docs) {
+      const data = doc.data();
+      batch.update(doc.ref, {
+        exchange_status: 'cancelled',
+        cancel_reason: 'timeout_48h',
+        cancelled_at: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      // Restaurar semana solicitada para 'available'
+      if (data.requested_week_id) {
+        const weekRef = db.collection('weeks').doc(data.requested_week_id);
+        batch.update(weekRef, { status: 'available' });
+      }
+      cancelled++;
+    }
+
+    await batch.commit();
+
+    await logAudit('AUTO_CANCEL_STALE_EXCHANGES', 'system', {
+      cancelled_count: cancelled,
+      cutoff_hours: 48,
+    });
+
+    console.log(`Auto-cancelamento: ${cancelled} trocas vencidas canceladas`);
+    res.json({ cancelled, message: `${cancelled} trocas canceladas por timeout de 48h` });
+  } catch (error: any) {
+    console.error('Erro no auto-cancelamento de trocas:', error);
+    res.status(500).json({ error: error.message || 'Erro ao cancelar trocas vencidas' });
+  }
+});
+
 app.listen(PORT, () => {
   console.log(`WeekSwap server running on port ${PORT}`);
 });

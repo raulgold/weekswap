@@ -42,7 +42,13 @@ export const api = {
     request<{ exchanges: any[] }>(`/api/exchanges/${userId}`),
 
   initiateExchange: (userId: string, offeredWeekId: string, requestedWeekId: string) =>
-    request<{ success: boolean; exchangeId: string }>('/api/initiate-exchange', {
+    request<{
+      success: boolean;
+      exchangeId: string;
+      differential: number;  // pts que o solicitante precisou cobrir (>0 = cobriu do saldo)
+      feeBRL: number;        // R$100
+      feeINT: number;        // R$255
+    }>('/api/initiate-exchange', {
       method: 'POST',
       body: JSON.stringify({ userId, offeredWeekId, requestedWeekId }),
     }),

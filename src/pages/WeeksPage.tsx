@@ -232,11 +232,23 @@ export function WeeksPage({ userId }: WeeksPageProps) {
   const confirmExchange = async (offeredWeekId: string, requestedWeekId: string) => {
     setRequesting(requestedWeekId);
     try {
-      await api.initiateExchange(userId, offeredWeekId, requestedWeekId);
-      alert('Solicitação de troca enviada! Aguarde a confirmação do proprietário.');
+      const result = await api.initiateExchange(userId, offeredWeekId, requestedWeekId);
+      let msg = 'Solicitação de troca enviada! Aguarde a confirmação do proprietário.';
+      if (result.differential && result.differential > 0) {
+        msg += `\n\n📊 Diferencial coberto: ${result.differential.toLocaleString('pt-BR')} pontos reservados do seu saldo para equalizar o valor das semanas.`;
+      }
+      alert(msg);
       setShowWeekSelectId(null);
+      // Recarregar semanas para refletir status atualizado
+      fetchWeeks();
     } catch (err: any) {
-      alert(err.message || 'Erro ao solicitar troca');
+      const msg = err.message || 'Erro ao solicitar troca';
+      // Verificar se é erro de diferencial insuficiente
+      if (msg.toLowerCase().includes('diferencial') || msg.toLowerCase().includes('saldo insuficiente')) {
+        alert(`⚠️ Pontos insuficientes\n\n${msg}\n\nVá em "Minhas Trocas" → "Comprar Pontos" para adquirir mais pontos.`);
+      } else {
+        alert(msg);
+      }
     } finally {
       setRequesting(null);
     }
