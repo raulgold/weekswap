@@ -537,7 +537,7 @@ app.post('/api/create-checkout-session', express.json(), checkRiskLocked, async 
 });
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Asaas: Webhook de confirmaÃƒÂ§ÃƒÂ£o de pagamento Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-// GET: verificação de existência do endpoint pelo Asaas
+// GET: verificacao de existencia do endpoint pelo Asaas
 app.get('/api/asaas-webhook', (_req, res) => {
   res.status(200).json({ status: 'ok', message: 'Asaas webhook endpoint ativo' });
 });
@@ -957,4 +957,157 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
     .limit(1)
     .get();
 
-  if (batc
+  if (batchQuery.empty) {
+    console.error('Lote de crÃƒÂ©ditos nÃƒÂ£o encontrado para dispute:', paymentIntent);
+    return;
+  }
+
+  const batchDoc = batchQuery.docs[0];
+  const batchData = batchDoc.data();
+  const userId = batchData.user_id;
+  const amount = batchData.amount;
+  const userRef = db.collection('users').doc(userId);
+
+  // BLOQUEIA A CONTA IMEDIATAMENTE
+  const updateData: Record<string, any> = {
+    account_status: 'RISK_LOCKED',
+    risk_locked_at: admin.firestore.FieldValue.serverTimestamp(),
+    risk_reason: 'chargeback_dispute',
+    dispute_id: dispute.id,
+  };
+
+  // Reverter crÃƒÂ©ditos com base no status do lote
+  if (batchData.status === 'AVAILABLE') {
+    updateData.credits_balance = admin.firestore.FieldValue.increment(-amount);
+  } else if (batchData.status === 'PENDING_CLEARANCE') {
+    updateData.pending_credits = admin.firestore.FieldValue.increment(-amount);
+  }
+
+  await userRef.update(updateData);
+
+  // Marcar o lote como disputado
+  await batchDoc.ref.update({
+    status: 'DISPUTED',
+    dispute_id: dispute.id,
+    disputed_at: admin.firestore.FieldValue.serverTimestamp(),
+  });
+
+  await logAudit('CHARGEBACK_DISPUTE_CREATED', userId, {
+    dispute_id: dispute.id,
+    amount_reversed: amount,
+    batch_status: batchData.status,
+  });
+  console.log(`CONTA BLOQUEADA: ${userId} por disputa ${dispute.id}`);
+}
+
+async function handleDisputeClosed(dispute: Stripe.Dispute) {
+  const paymentIntent = dispute.payment_intent as string;
+
+  const batchQuery = await db
+    .collection('credit_batches')
+    .where('stripe_payment_intent', '==', paymentIntent)
+    .limit(1)
+    .get();
+
+  if (batchQuery.empty) return;
+
+  const batchDoc = batchQuery.docs[0];
+  const batchData = batchDoc.data();
+
+  if (dispute.status === 'won') {
+    // Plataforma ganhou a disputa - restaurar crÃƒÂ©ditos
+    const userRef = db.collection('users').doc(batchData.user_id);
+    await userRef.update({
+      credits_balance: admin.firestore.FieldValue.increment(batchData.amount),
+    });
+
+    await batchDoc.ref.update({
+      status: 'AVAILABLE',
+      dispute_resolved_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    await logAudit('CHARGEBACK_DISPUTE_WON', batchData.user_id, {
+      dispute_id: dispute.id,
+      amount_restored: batchData.amount,
+    });
+    console.log(`Disputa vencida: crÃƒÂ©ditos restaurados para ${batchData.user_id}`);
+  }
+}
+
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Audit Log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+async function logAudit(action: string, userId: string, data: Record<string, any>) {
+  try {
+    await db.collection('audit_logs').add({
+      action,
+      user_id: userId,
+      ...data,
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+  } catch (err) {
+    console.error('Erro ao gravar audit_log:', err);
+  }
+}
+
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ UtilitÃƒÂ¡rios Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+function getReferralRate(referralCount: number): number {
+  if (referralCount >= 51) return 0.025;
+  if (referralCount >= 21) return 0.020;
+  if (referralCount >= 6)  return 0.015;
+  return 0.010;
+}
+
+async function distributeReferralBonus(userId: string, tradeAmount: number) {
+  try {
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) return;
+
+    const referredBy = userDoc.data()?.referred_by;
+    if (!referredBy) return;
+
+    // Buscar o indicador pelo referral_code
+    const referrerQuery = await db
+      .collection('users')
+      .where('referral_code', '==', referredBy)
+      .limit(1)
+      .get();
+
+    if (referrerQuery.empty) return;
+
+    const referrerDoc = referrerQuery.docs[0];
+    const referrerData = referrerDoc.data();
+    const referralCount = referrerData.referral_count || 0;
+    const rate = getReferralRate(referralCount);
+    const bonus = Math.floor(tradeAmount * rate);
+
+    if (bonus <= 0) return;
+
+    await referrerDoc.ref.update({
+      referral_credits: admin.firestore.FieldValue.increment(bonus),
+    });
+
+    console.log(`BÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o: ${bonus} crÃƒÂ©ditos para ${referrerDoc.id}`);
+  } catch (error) {
+    console.error('Erro ao distribuir bÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o:', error);
+  }
+}
+
+async function updateGlobalStats(commissionAmount: number, exchangeCount: number) {
+  const statsRef = db.collection('platform').doc('stats');
+  await statsRef.set(
+    {
+      total_commission: admin.firestore.FieldValue.increment(commissionAmount),
+      total_exchanges: admin.firestore.FieldValue.increment(exchangeCount),
+      last_updated: admin.firestore.FieldValue.serverTimestamp(),
+    },
+    { merge: true }
+  );
+}
+
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ InicializaÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+app.listen(PORT, () => {
+  console.log(`WeekSwap server running on port ${PORT}`);
+});
+
+export default app;
