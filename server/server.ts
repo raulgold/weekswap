@@ -121,10 +121,12 @@ function labelPontosSemana(pontos: number): string {
   return 'Economica';
 }
 
-// Taxa fixa de finalizacao por pais
-// Brasil: R$100 = 10.000 pts | Internacional: USD 50 = 25.500 pts (USD_TO_BRL = 5.10)
-const EXCHANGE_FEE_BRL = 10000;
-const EXCHANGE_FEE_INT = 25500;
+// Taxa fixa de finalizacao por pais (cobrada em dinheiro via Asaas, NAO em pontos)
+// Brasil: R$100 | Internacional: USD 50 = ~R$255 (USD_TO_BRL = 5.10)
+const USD_TO_BRL       = 5.10;
+const EXCHANGE_FEE_USD = 50;                              // USD 50
+const EXCHANGE_FEE_BRL_REAIS = 100;                       // R$100
+const EXCHANGE_FEE_INT_REAIS = Math.round(EXCHANGE_FEE_USD * USD_TO_BRL); // R$255
 
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
@@ -408,8 +410,8 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
         requested_week_id: requestedWeekId,
         req_points: reqPts,
         owner_points: ownerPts,
-        exchange_fee_brl: EXCHANGE_FEE_BRL,
-        exchange_fee_int: EXCHANGE_FEE_INT,
+        exchange_fee_brl_reais: EXCHANGE_FEE_BRL_REAIS,
+        exchange_fee_int_reais: EXCHANGE_FEE_INT_REAIS,
         exchange_status: 'pending',
         exchange_locked: false,
         created_at: admin.firestore.FieldValue.serverTimestamp(),
@@ -425,9 +427,9 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
     res.json({
       success: true,
       exchangeId,
-      differential,                 // pts que o solicitante precisara comprar (se > 0)
-      feeBRL: EXCHANGE_FEE_BRL,
-      feeINT: EXCHANGE_FEE_INT,
+      differential,                              // pts que o solicitante precisara comprar (se > 0)
+      feeBRL: EXCHANGE_FEE_BRL_REAIS,            // R$100
+      feeINT: EXCHANGE_FEE_INT_REAIS,            // R$255 (USD50 × 5.10)
     });
   } catch (error: any) {
     console.error('Erro ao iniciar troca:', error);
@@ -505,97 +507,209 @@ app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) =
   }
 });
 
-// Finalizar troca - cobra taxa por pais (BR: R$100 = 10.000 pts | INT: USD50 = 25.500 pts)
-app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
-  try {
-    const { userId, exchangeId, country } = req.body;
-    if (!exchangeId) return res.status(400).json({ error: 'exchangeId e obrigatorio' });
+// ─── Helper: finalizar troca apos taxa paga (chamado pelo webhook Asaas) ──────
+async function finalizarTrocaAposTaxa(
+  exchangeId: string,
+  ownerId: string,
+  country: string,
+  feeReais: number,
+  asaasPaymentId: string
+): Promise<void> {
+  const exchangeRef = db.collection('exchanges').doc(exchangeId);
+  const feeLabel = country === 'INTERNATIONAL'
+    ? `USD ${EXCHANGE_FEE_USD} (R$${feeReais.toFixed(2)})`
+    : `R$${feeReais.toFixed(2)}`;
 
-    // Determinar taxa pelo pais do solicitante
-    const userCountry: string = (country === 'INTERNATIONAL') ? 'INTERNATIONAL' : 'BR';
-    const feeAmount: number = userCountry === 'INTERNATIONAL' ? EXCHANGE_FEE_INT : EXCHANGE_FEE_BRL;
-    const feeLabel: string  = userCountry === 'INTERNATIONAL' ? 'USD 50 (25.500 pts)' : 'R$100 (10.000 pts)';
+  const exData = await db.runTransaction(async (transaction) => {
+    const exchangeSnap = await transaction.get(exchangeRef);
+    if (!exchangeSnap.exists) throw new Error('Troca nao encontrada');
+    const exD = exchangeSnap.data()!;
 
-    const exchangeRef = db.collection('exchanges').doc(exchangeId);
-    const exchangeDoc = await exchangeRef.get();
-    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
+    if (exD.exchange_status === 'FINALIZED') throw new Error('Troca ja finalizada');
+    if (exD.exchange_locked) throw new Error('Troca travada');
 
-    const exData = exchangeDoc.data()!;
-
-    if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja foi finalizada' });
-    if (exData.exchange_locked) return res.status(400).json({ error: 'Troca esta travada' });
-    if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode finalizar a troca' });
-    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
-
-    await db.runTransaction(async (transaction) => {
-      const freshExchange = await transaction.get(exchangeRef);
-      if (freshExchange.data()?.exchange_locked) throw new Error('Troca foi travada durante o processamento');
-
-      // Verificar saldo do dono para pagar a taxa de finalizacao
-      const ownerRef = db.collection('users').doc(userId);
-      const ownerDoc = await transaction.get(ownerRef);
-      const ownerBalance = ownerDoc.data()?.credits_balance || 0;
-
-      if (ownerBalance < feeAmount) {
-        throw Object.assign(
-          new Error(
-            `Saldo insuficiente para pagar a taxa de finalizacao (${feeLabel}). ` +
-            `Voce tem ${ownerBalance} pts mas precisa de ${feeAmount} pts. ` +
-            `Compre ${feeAmount - ownerBalance} pts para continuar.`
-          ),
-          { statusCode: 402 }
-        );
-      }
-
-      // Cobrar taxa de finalizacao do dono
-      transaction.update(ownerRef, {
-        credits_balance: admin.firestore.FieldValue.increment(-feeAmount),
-      });
-
-      // Travar e finalizar a troca
-      transaction.update(exchangeRef, {
-        exchange_status: 'FINALIZED',
-        exchange_locked: true,
-        fee_charged: feeAmount,
-        fee_pts: feeAmount,
-        fee_country: userCountry,
-        fee_label: feeLabel,
-        fee_payer: userId,
-        finalized_at: admin.firestore.FieldValue.serverTimestamp(),
-      });
-
-      // Marcar semanas como trocadas
-      const offeredWeekRef = db.collection('weeks').doc(exData.offered_week_id);
-      const requestedWeekRef = db.collection('weeks').doc(exData.requested_week_id);
-      transaction.update(offeredWeekRef, { status: 'exchanged' });
-      transaction.update(requestedWeekRef, { status: 'exchanged' });
+    transaction.update(exchangeRef, {
+      exchange_status: 'FINALIZED',
+      exchange_locked: true,
+      fee_reais: feeReais,
+      fee_country: country,
+      fee_label: feeLabel,
+      fee_payer: ownerId,
+      fee_asaas_payment_id: asaasPaymentId,
+      finalized_at: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Pos-transacao: estatisticas e bonus de indicacao
-    try {
-      await updateGlobalStats(feeAmount, 1);
-      await distributeReferralBonus(exData.requester_id, feeAmount);
-      await logAudit('EXCHANGE_FINALIZED', userId, {
-        exchange_id: exchangeId,
-        fee_amount: feeAmount,
-        fee_country: userCountry,
-        owner_id: exData.owner_id,
-        requester_id: exData.requester_id,
-        req_points: exData.req_points || 0,
-        owner_points: exData.owner_points || 0,
-      });
-    } catch (postErr) {
-      console.error('Erro em operacoes pos-transacao (nao critico):', postErr);
+    const offeredWeekRef  = db.collection('weeks').doc(exD.offered_week_id);
+    const requestedWeekRef = db.collection('weeks').doc(exD.requested_week_id);
+    transaction.update(offeredWeekRef,  { status: 'exchanged' });
+    transaction.update(requestedWeekRef, { status: 'exchanged' });
+
+    return exD;
+  });
+
+  try {
+    await updateGlobalStats(feeReais, 1);
+    await distributeReferralBonus(exData.requester_id, feeReais);
+    await logAudit('EXCHANGE_FINALIZED', ownerId, {
+      exchange_id: exchangeId,
+      fee_reais: feeReais,
+      fee_country: country,
+      asaas_payment_id: asaasPaymentId,
+      owner_id: exData.owner_id,
+      requester_id: exData.requester_id,
+    });
+  } catch (postErr) {
+    console.error('Erro pos-finalizacao (nao critico):', postErr);
+  }
+}
+
+// Criar cobranca Asaas para taxa de finalizacao de troca (sem pontos)
+app.post('/api/create-exchange-fee-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
+  try {
+    const { userId, exchangeId, billingType, cpf, country } = req.body;
+    if (!exchangeId) return res.status(400).json({ error: 'exchangeId obrigatorio' });
+
+    const userCountry: string = country === 'INTERNATIONAL' ? 'INTERNATIONAL' : 'BR';
+    const feeReais: number    = userCountry === 'INTERNATIONAL' ? EXCHANGE_FEE_INT_REAIS : EXCHANGE_FEE_BRL_REAIS;
+    const feeLabel: string    = userCountry === 'INTERNATIONAL'
+      ? `Taxa WeekSwap — USD ${EXCHANGE_FEE_USD} (R$${feeReais.toFixed(2)})`
+      : `Taxa WeekSwap — R$${feeReais.toFixed(2)}`;
+
+    const bt = (billingType || 'PIX').toUpperCase();
+    if (!['PIX', 'BOLETO', 'CREDIT_CARD'].includes(bt)) {
+      return res.status(400).json({ error: 'billingType invalido' });
     }
+
+    // Verificar que a troca existe e que o usuario e o dono
+    const exchangeDoc = await db.collection('exchanges').doc(exchangeId).get();
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
+    const exData = exchangeDoc.data()!;
+    if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono da semana paga a taxa' });
+    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
+    if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja finalizada' });
+
+    // Verificar se ja existe taxa pendente ou paga
+    const existingFeeQ = await db.collection('exchange_fee_payments')
+      .where('exchange_id', '==', exchangeId)
+      .where('status', 'in', ['PENDING', 'CONFIRMED'])
+      .limit(1).get();
+    if (!existingFeeQ.empty) {
+      return res.status(400).json({ error: 'Ja existe cobranca de taxa para esta troca' });
+    }
+
+    // Buscar ou criar cliente Asaas
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    const userData = userDoc.data()!;
+    const cpfCnpj = cpf || userData.cpf || '';
+    let asaasCustomerId = userData.asaas_customer_id;
+
+    if (!asaasCustomerId) {
+      if (!cpfCnpj) return res.status(400).json({ error: 'CPF obrigatorio para criar cobranca' });
+      const customer = await asaasRequest('/customers', 'POST', {
+        name: userData.name || 'Cliente WeekSwap',
+        email: userData.email,
+        cpfCnpj,
+        externalReference: userId,
+      });
+      if (!customer.id) return res.status(500).json({ error: 'Erro ao criar cliente no gateway' });
+      asaasCustomerId = customer.id;
+      const upd: Record<string, any> = { asaas_customer_id: asaasCustomerId };
+      if (cpf) upd.cpf = cpf;
+      await db.collection('users').doc(userId).update(upd);
+    }
+
+    // Criar cobranca Asaas
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 1);
+    const dueDateStr = dueDate.toISOString().split('T')[0];
+
+    const payment = await asaasRequest('/payments', 'POST', {
+      customer: asaasCustomerId,
+      billingType: bt,
+      value: feeReais,
+      dueDate: dueDateStr,
+      description: feeLabel,
+      externalReference: `fee_${exchangeId}_${userId}`,
+    });
+
+    if (!payment.id) {
+      console.error('Erro ao criar cobranca Asaas (taxa troca):', JSON.stringify(payment));
+      return res.status(500).json({ error: 'Erro ao criar cobranca', details: payment.errors || payment });
+    }
+
+    // Registrar no Firestore (sem pontos)
+    await db.collection('exchange_fee_payments').add({
+      exchange_id: exchangeId,
+      user_id: userId,
+      country: userCountry,
+      fee_reais: feeReais,
+      fee_label: feeLabel,
+      billing_type: bt,
+      asaas_payment_id: payment.id,
+      status: 'PENDING',
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    // PIX
+    let pixData = null;
+    let boletoUrl = '';
+    if (bt === 'PIX') {
+      const pixInfo = await asaasRequest(`/payments/${payment.id}/pixQrCode`, 'GET');
+      pixData = {
+        qrCodeImage: pixInfo.encodedImage,
+        copyPaste: pixInfo.payload,
+        expirationDate: pixInfo.expirationDate,
+      };
+    }
+    if (bt === 'BOLETO') boletoUrl = payment.bankSlipUrl || '';
 
     res.json({
       success: true,
-      data: { exchangeId, feeAmount, feeLabel, feeCountry: userCountry },
+      paymentId: payment.id,
+      billingType: bt,
+      value: feeReais,
+      feeLabel,
+      pixData,
+      boletoUrl,
+      invoiceUrl: payment.invoiceUrl || '',
     });
   } catch (error: any) {
-    console.error('Erro ao finalizar troca:', error);
-    const status = error.statusCode || 500;
-    res.status(status).json({ error: error.message || 'Erro ao finalizar troca' });
+    console.error('Erro ao criar cobranca de taxa de troca:', error);
+    res.status(error.statusCode || 500).json({ error: error.message || 'Erro ao criar cobranca' });
+  }
+});
+
+// Finalizar troca (rota legada/admin - apenas verifica se taxa foi paga)
+app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
+  try {
+    const { userId, exchangeId } = req.body;
+    if (!exchangeId) return res.status(400).json({ error: 'exchangeId obrigatorio' });
+
+    const exchangeDoc = await db.collection('exchanges').doc(exchangeId).get();
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
+    const exData = exchangeDoc.data()!;
+
+    if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode finalizar a troca' });
+    if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja finalizada' });
+    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'Troca precisa estar confirmada primeiro' });
+
+    // Verificar se a taxa foi paga
+    const feeQ = await db.collection('exchange_fee_payments')
+      .where('exchange_id', '==', exchangeId)
+      .where('status', '==', 'CONFIRMED')
+      .limit(1).get();
+
+    if (feeQ.empty) {
+      return res.status(402).json({
+        error: 'A taxa de finalizacao ainda nao foi paga. Use o botao "Pagar Taxa e Finalizar" para gerar o pagamento.',
+      });
+    }
+
+    res.json({ success: true, message: 'Taxa ja paga — troca sera finalizada automaticamente pelo webhook.' });
+  } catch (error: any) {
+    console.error('Erro ao verificar complete-exchange:', error);
+    res.status(500).json({ error: error.message || 'Erro' });
   }
 });
 
@@ -667,7 +781,36 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
       const payment = event.payment;
       if (!payment) return res.json({ received: true });
 
-      // Buscar lote de crÃƒÂ©ditos pelo ID do pagamento Asaas
+      // ── Verificar se e taxa de finalizacao de troca (sem pontos) ──────────
+      const feeQ = await db.collection('exchange_fee_payments')
+        .where('asaas_payment_id', '==', payment.id)
+        .limit(1).get();
+
+      if (!feeQ.empty) {
+        const feeDoc = feeQ.docs[0];
+        const feeData = feeDoc.data();
+        if (feeData.status === 'PENDING') {
+          try {
+            await finalizarTrocaAposTaxa(
+              feeData.exchange_id,
+              feeData.user_id,
+              feeData.country,
+              feeData.fee_reais,
+              payment.id
+            );
+            await feeDoc.ref.update({
+              status: 'CONFIRMED',
+              confirmed_at: admin.firestore.FieldValue.serverTimestamp(),
+            });
+            console.log(`Taxa de troca confirmada e troca finalizada: ${feeData.exchange_id}`);
+          } catch (feeErr: any) {
+            console.error('Erro ao finalizar troca via webhook de taxa:', feeErr.message);
+          }
+        }
+        return res.json({ received: true });
+      }
+
+      // ── Pagamento de compra de pontos ─────────────────────────────────────
       const batchQuery = await db
         .collection('credit_batches')
         .where('asaas_payment_id', '==', payment.id)

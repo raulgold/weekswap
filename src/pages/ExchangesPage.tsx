@@ -3,7 +3,7 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftRight, Check, X, Clock, AlertCircle,
   ChevronDown, ChevronUp, FileText, QrCode, CreditCard,
-  ExternalLink, Copy, Smartphone
+  ExternalLink, Copy, Smartphone, DollarSign
 } from 'lucide-react';
 import { api } from '../lib/api';
 import { useGeo } from '../lib/GeoContext';
@@ -13,20 +13,32 @@ interface ExchangesPageProps {
 }
 
 const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }> = {
-  pending:   { label: 'Aguardando confirmação', color: 'bg-amber-100 text-amber-700',    icon: Clock },
-  confirmed: { label: 'Confirmada',             color: 'bg-blue-100 text-blue-700',      icon: Check },
-  FINALIZED: { label: 'Finalizada',             color: 'bg-emerald-100 text-emerald-700', icon: Check },
-  cancelled: { label: 'Cancelada',              color: 'bg-red-100 text-red-700',        icon: X },
+  pending:           { label: 'Aguardando confirmação', color: 'bg-amber-100 text-amber-700',     icon: Clock },
+  confirmed:         { label: 'Confirmada',             color: 'bg-blue-100 text-blue-700',       icon: Check },
+  fee_pending:       { label: 'Taxa pendente',          color: 'bg-orange-100 text-orange-700',   icon: DollarSign },
+  FINALIZED:         { label: 'Finalizada',             color: 'bg-emerald-100 text-emerald-700', icon: Check },
+  cancelled:         { label: 'Cancelada',              color: 'bg-red-100 text-red-700',         icon: X },
 };
 
 export function ExchangesPage({ userId }: ExchangesPageProps) {
-  const { country, EXCHANGE_FEE_PTS, EXCHANGE_FEE_LABEL } = useGeo();
+  const { country, EXCHANGE_FEE_REAIS, EXCHANGE_FEE_LABEL } = useGeo();
+
+  // listagem
   const [exchanges, setExchanges] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState<string | null>(null);
   const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [showContractId, setShowContractId] = useState<string | null>(null);
   const [filter, setFilter] = useState<'all' | 'pending' | 'confirmed' | 'FINALIZED' | 'cancelled'>('all');
+
+  // Modal taxa de finalizacao (R$100 / R$255 — pago em dinheiro via Asaas)
+  const [feeExchangeId, setFeeExchangeId] = useState<string | null>(null);
+  const [feeBillingType, setFeeBillingType] = useState<'PIX' | 'BOLETO' | 'CREDIT_CARD'>('PIX');
+  const [feeLoading, setFeeLoading] = useState(false);
+  const [feeResult, setFeeResult] = useState<any | null>(null);
+  const [feePixCopied, setFeePixCopied] = useState(false);
+
+  // Modal compra de pontos (para cobrir diferencial)
   const [payingExchangeId, setPayingExchangeId] = useState<string | null>(null);
   const [payAmount, setPayAmount] = useState(100);
   const [payBillingType, setPayBillingType] = useState<'PIX' | 'BOLETO' | 'CREDIT_CARD'>('PIX');
@@ -46,6 +58,8 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
   }, [userId]);
 
   useEffect(() => { fetchExchanges(); }, [fetchExchanges]);
+
+  // ── Acoes ─────────────────────────────────────────────────────────────────
 
   const handleConfirm = async (exchangeId: string) => {
     setActionLoading(exchangeId + '_confirm');
@@ -72,22 +86,36 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
     }
   };
 
-  const handleComplete = async (exchangeId: string) => {
-    const feeMsg = country === 'BR'
-      ? `Taxa WeekSwap: R$100 (10.000 pts) será debitada da sua conta.`
-      : `Taxa WeekSwap: USD 50 (25.500 pts) será debitada da sua conta.`;
-    if (!confirm(`Confirma a finalização desta troca?\n\n${feeMsg}\n\nOs créditos serão liberados após a dedução da taxa.`)) return;
-    setActionLoading(exchangeId + '_complete');
+  // Pagar taxa de finalizacao (em dinheiro — nao em pontos)
+  const handleFeePayment = async () => {
+    if (!feeExchangeId) return;
+    setFeeLoading(true);
     try {
-      await api.completeExchange(userId, exchangeId, country);
-      fetchExchanges();
+      const result = await api.createExchangeFeePayment(userId, feeExchangeId, feeBillingType, country);
+      setFeeResult(result);
     } catch (err: any) {
-      alert(err.message || 'Erro ao finalizar troca');
+      alert(err.message || 'Erro ao criar cobrança da taxa');
     } finally {
-      setActionLoading(null);
+      setFeeLoading(false);
     }
   };
 
+  const handleCopyFeePix = () => {
+    if (feeResult?.pixData?.copyPaste) {
+      navigator.clipboard.writeText(feeResult.pixData.copyPaste);
+      setFeePixCopied(true);
+      setTimeout(() => setFeePixCopied(false), 3000);
+    }
+  };
+
+  const closeFeeModal = () => {
+    setFeeExchangeId(null);
+    setFeeResult(null);
+    setFeePixCopied(false);
+    fetchExchanges();
+  };
+
+  // Compra de pontos (para cobrir diferencial entre semanas)
   const handlePayExchange = async () => {
     if (!payingExchangeId) return;
     setPayLoading(true);
@@ -116,10 +144,12 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
     fetchExchanges();
   };
 
+  // ── Filtros ───────────────────────────────────────────────────────────────
+
   const filtered = filter === 'all' ? exchanges : exchanges.filter(e => e.exchange_status === filter);
   const counts = {
-    all: exchanges.length,
-    pending: exchanges.filter(e => e.exchange_status === 'pending').length,
+    all:       exchanges.length,
+    pending:   exchanges.filter(e => e.exchange_status === 'pending').length,
     confirmed: exchanges.filter(e => e.exchange_status === 'confirmed').length,
     FINALIZED: exchanges.filter(e => e.exchange_status === 'FINALIZED').length,
     cancelled: exchanges.filter(e => e.exchange_status === 'cancelled').length,
@@ -150,14 +180,13 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
         ))}
       </div>
 
-      {/* Aviso de como funciona */}
       {counts.pending > 0 && (
         <div className="bg-amber-50 border border-amber-200 rounded-2xl p-4 flex items-start gap-3">
           <AlertCircle size={18} className="text-amber-600 flex-shrink-0 mt-0.5" />
           <div className="text-sm">
             <p className="font-bold text-amber-800">Você tem solicitações pendentes</p>
             <p className="text-amber-700 mt-0.5">
-              Revise as trocas abaixo e confirme ou recuse. Quando o dono confirmar, a troca avança para pagamento.
+              Revise as trocas abaixo e confirme ou recuse. Quando o dono confirmar, a troca avança para pagamento da taxa.
             </p>
           </div>
         </div>
@@ -187,7 +216,6 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                 transition={{ delay: i * 0.05 }}
                 className="bg-white rounded-2xl shadow-sm border border-gray-100 overflow-hidden"
               >
-                {/* Header */}
                 <div className="p-6">
                   <div className="flex items-start justify-between mb-4">
                     <div>
@@ -202,7 +230,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                     </span>
                   </div>
 
-                  {/* Semanas envolvidas (resumo) */}
+                  {/* Semanas envolvidas */}
                   <div className="grid grid-cols-2 gap-3 mb-4">
                     <div className="bg-gray-50 rounded-xl p-3">
                       <p className="text-xs text-gray-400 mb-1">Semana oferecida</p>
@@ -214,22 +242,17 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                     </div>
                   </div>
 
-                  {/* Detalhes financeiros (se finalizada) */}
+                  {/* Detalhes se finalizada */}
                   {exchange.exchange_status === 'FINALIZED' && (
                     <div className="bg-emerald-50 rounded-xl p-4 mb-4 text-center">
-                      <p className="text-xs text-gray-500 mb-1">Taxa de finalização cobrada</p>
-                      <p className="font-black text-amber-600 text-lg">
-                        {exchange.fee_pts
-                          ? `${Number(exchange.fee_pts).toLocaleString('pt-BR')} pts`
-                          : '10.000 pts'}
+                      <p className="text-xs text-gray-500 mb-1">Taxa de finalização paga</p>
+                      <p className="font-black text-emerald-700 text-lg">
+                        {exchange.fee_label || (exchange.fee_country === 'INTERNATIONAL' ? 'USD 50 (R$255)' : 'R$100')}
                       </p>
-                      <p className="text-xs text-gray-400 mt-1">
-                        {exchange.fee_country === 'BR' ? 'R$100 — Brasil' : 'USD 50 — Internacional'}
-                      </p>
+                      <p className="text-xs text-gray-400 mt-1">Troca concluída com sucesso ✅</p>
                     </div>
                   )}
 
-                  {/* Botão ver mais */}
                   <button
                     onClick={() => setExpandedId(isExpanded ? null : exchange.id)}
                     className="flex items-center gap-1 text-xs text-gray-400 hover:text-gray-600 mb-4"
@@ -238,7 +261,6 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                     {isExpanded ? 'Ocultar detalhes' : 'Ver detalhes e ações'}
                   </button>
 
-                  {/* Ações */}
                   <AnimatePresence>
                     {isExpanded && (
                       <motion.div
@@ -249,7 +271,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                       >
                         <div className="border-t border-gray-100 pt-4 space-y-3">
 
-                          {/* Owner vê solicitação pendente → pode confirmar ou recusar */}
+                          {/* Owner + pending */}
                           {isOwner && exchange.exchange_status === 'pending' && (
                             <div className="space-y-2">
                               <p className="text-sm font-bold text-gray-700">Um usuário quer trocar semanas com você:</p>
@@ -274,7 +296,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                             </div>
                           )}
 
-                          {/* Solicitante vê que está pendente → pode cancelar */}
+                          {/* Solicitante + pending */}
                           {!isOwner && exchange.exchange_status === 'pending' && (
                             <div className="space-y-2">
                               <p className="text-sm text-gray-500">Aguardando o proprietário aceitar sua solicitação.</p>
@@ -289,41 +311,45 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                             </div>
                           )}
 
-                          {/* Confirmed → owner pode finalizar / qualquer um pode cancelar */}
+                          {/* Confirmed */}
                           {exchange.exchange_status === 'confirmed' && (
                             <div className="space-y-3">
                               <div className="bg-blue-50 rounded-xl p-3 text-sm text-blue-700">
                                 <p className="font-bold mb-1">✅ Troca confirmada!</p>
                                 {isOwner ? (
                                   <>
-                                    <p>Confirme a entrega quando tudo estiver resolvido.</p>
-                                    <p className="mt-1 text-xs text-amber-700 font-semibold">
-                                      Taxa de finalização: {EXCHANGE_FEE_LABEL} ({EXCHANGE_FEE_PTS.toLocaleString('pt-BR')} pts) será debitada da sua conta.
+                                    <p>Para finalizar, pague a taxa de serviço WeekSwap.</p>
+                                    <p className="mt-1 text-xs font-semibold text-amber-700">
+                                      Taxa: {EXCHANGE_FEE_LABEL} — pagamento em dinheiro (PIX / Boleto / Cartão)
                                     </p>
                                   </>
                                 ) : (
-                                  <p>Aguardando o proprietário confirmar a entrega. Se precisar comprar pontos para cobrir o diferencial, vá em "Semanas".</p>
+                                  <p>
+                                    Aguardando o proprietário pagar a taxa e confirmar a entrega.
+                                    Se precisar de mais pontos para cobrir o diferencial de semanas, use o botão abaixo.
+                                  </p>
                                 )}
                               </div>
 
-                              {!isOwner && (
+                              {/* Owner paga taxa (em dinheiro) */}
+                              {isOwner && (
                                 <button
-                                  onClick={() => setPayingExchangeId(exchange.id)}
-                                  className="w-full flex items-center justify-center gap-2 bg-green-600 text-white py-3 rounded-xl font-black hover:bg-green-700 transition-colors"
+                                  onClick={() => setFeeExchangeId(exchange.id)}
+                                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white py-3 rounded-xl font-black hover:bg-emerald-700 transition-colors"
                                 >
-                                  <QrCode size={18} />
-                                  Pagar Agora (PIX / Boleto / Cartão)
+                                  <DollarSign size={18} />
+                                  Pagar Taxa e Finalizar Troca ({EXCHANGE_FEE_LABEL})
                                 </button>
                               )}
 
-                              {isOwner && (
+                              {/* Solicitante compra pontos para diferencial */}
+                              {!isOwner && (
                                 <button
-                                  onClick={() => handleComplete(exchange.id)}
-                                  disabled={actionLoading === exchange.id + '_complete'}
-                                  className="w-full flex items-center justify-center gap-2 bg-emerald-600 text-white py-3 rounded-xl font-black hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                                  onClick={() => setPayingExchangeId(exchange.id)}
+                                  className="w-full flex items-center justify-center gap-2 bg-indigo-50 text-indigo-700 py-2.5 rounded-xl font-bold hover:bg-indigo-100 transition-colors text-sm"
                                 >
-                                  <Check size={18} />
-                                  {actionLoading === exchange.id + '_complete' ? 'Finalizando...' : 'Confirmar Entrega e Finalizar'}
+                                  <QrCode size={16} />
+                                  Comprar Pontos para Diferencial
                                 </button>
                               )}
 
@@ -339,7 +365,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                             </div>
                           )}
 
-                          {/* Ver contrato */}
+                          {/* Ver comprovante */}
                           {exchange.exchange_status === 'FINALIZED' && (
                             <button
                               onClick={() => setShowContractId(exchange.id)}
@@ -360,36 +386,188 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
         </div>
       )}
 
-      {/* Modal de Pagamento da Troca */}
+      {/* ── Modal: Taxa de Finalização (em dinheiro, sem pontos) ─────────────── */}
+      <AnimatePresence>
+        {feeExchangeId && (
+          <motion.div
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
+            onClick={e => e.target === e.currentTarget && closeFeeModal()}
+          >
+            <motion.div
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
+              className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
+            >
+              <div className="flex items-center justify-between p-6 border-b border-gray-100">
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Taxa de Finalização</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">Serviço WeekSwap — não gera pontos</p>
+                </div>
+                <button onClick={closeFeeModal} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
+              </div>
+
+              <div className="p-6">
+                {!feeResult ? (
+                  <div className="space-y-4">
+                    {/* Valor fixo */}
+                    <div className="bg-emerald-50 rounded-2xl p-4 text-center">
+                      <p className="text-xs text-gray-500 mb-1">Valor da taxa</p>
+                      <p className="text-3xl font-black text-emerald-700">{EXCHANGE_FEE_LABEL}</p>
+                      <p className="text-xs text-gray-400 mt-1">
+                        {country === 'INTERNATIONAL' ? 'USD 50 convertido para BRL (taxa do dia)' : 'Taxa fixa para usuários do Brasil'}
+                      </p>
+                    </div>
+
+                    <div className="bg-amber-50 rounded-xl p-3 text-xs text-amber-700">
+                      <strong>ℹ️ Esta taxa vai direto para a WeekSwap</strong> — não converte em pontos.
+                      Os pontos da sua semana seguem inalterados.
+                    </div>
+
+                    <div className="space-y-2">
+                      {[
+                        { type: 'PIX' as const,         label: 'PIX',               desc: 'Instantâneo',        icon: QrCode },
+                        { type: 'BOLETO' as const,      label: 'Boleto',             desc: 'Até 3 dias úteis',   icon: ExternalLink },
+                        { type: 'CREDIT_CARD' as const, label: 'Cartão de Crédito',  desc: 'Aprovação imediata', icon: CreditCard },
+                      ].map(({ type, label, desc, icon: Icon }) => (
+                        <button
+                          key={type}
+                          onClick={() => setFeeBillingType(type)}
+                          className={`w-full flex items-center gap-3 p-3 rounded-xl border-2 transition-all ${
+                            feeBillingType === type ? 'border-emerald-500 bg-emerald-50' : 'border-gray-200 hover:border-gray-300'
+                          }`}
+                        >
+                          <Icon size={20} className={feeBillingType === type ? 'text-emerald-600' : 'text-gray-400'} />
+                          <div className="text-left">
+                            <p className="text-sm font-bold text-gray-900">{label}</p>
+                            <p className="text-xs text-gray-500">{desc}</p>
+                          </div>
+                          {feeBillingType === type && (
+                            <div className="ml-auto w-4 h-4 bg-emerald-600 rounded-full flex items-center justify-center">
+                              <Check size={10} className="text-white" />
+                            </div>
+                          )}
+                        </button>
+                      ))}
+                    </div>
+
+                    <button
+                      onClick={handleFeePayment}
+                      disabled={feeLoading}
+                      className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-emerald-700 transition-colors disabled:opacity-50"
+                    >
+                      {feeLoading ? 'Gerando cobrança...' : `Pagar ${EXCHANGE_FEE_LABEL} e Finalizar`}
+                    </button>
+                  </div>
+                ) : (
+                  <div className="space-y-4">
+                    {feeResult.billingType === 'PIX' && feeResult.pixData && (
+                      <div className="space-y-4">
+                        <div className="bg-green-50 border border-green-200 rounded-2xl p-4 text-center">
+                          <p className="text-green-700 font-bold">PIX gerado!</p>
+                          <p className="text-xs text-green-600 mt-1">
+                            Pague e a troca será finalizada automaticamente.
+                          </p>
+                        </div>
+                        <div className="flex justify-center">
+                          <img
+                            src={`data:image/png;base64,${feeResult.pixData.qrCodeImage}`}
+                            alt="QR Code PIX"
+                            className="w-44 h-44 rounded-xl border border-gray-200"
+                          />
+                        </div>
+                        <div className="bg-gray-50 rounded-xl p-3">
+                          <p className="text-xs text-gray-500 mb-2">Código copia e cola:</p>
+                          <div className="flex items-center gap-2">
+                            <p className="text-xs font-mono flex-1 truncate text-gray-700">{feeResult.pixData.copyPaste}</p>
+                            <button
+                              onClick={handleCopyFeePix}
+                              className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
+                                feePixCopied ? 'bg-green-500 text-white' : 'bg-emerald-600 text-white hover:bg-emerald-700'
+                              }`}
+                            >
+                              {feePixCopied ? <Check size={12} /> : <Copy size={12} />}
+                              {feePixCopied ? 'Copiado!' : 'Copiar'}
+                            </button>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2 text-xs text-amber-600 bg-amber-50 rounded-xl p-3">
+                          <Smartphone size={16} />
+                          <span>Após o pagamento, a troca é finalizada automaticamente pelo sistema.</span>
+                        </div>
+                      </div>
+                    )}
+
+                    {feeResult.billingType === 'BOLETO' && (
+                      <div className="space-y-3">
+                        <div className="bg-blue-50 border border-blue-200 rounded-2xl p-4 text-center">
+                          <p className="text-blue-700 font-bold">Boleto gerado!</p>
+                          <p className="text-xs text-blue-500 mt-1">A troca é finalizada após a compensação.</p>
+                        </div>
+                        {feeResult.boletoUrl && (
+                          <a href={feeResult.boletoUrl} target="_blank" rel="noopener noreferrer"
+                            className="flex items-center justify-center gap-2 w-full bg-blue-600 text-white py-4 rounded-2xl font-black hover:bg-blue-700 transition-colors"
+                          >
+                            <ExternalLink size={18} /> Abrir Boleto
+                          </a>
+                        )}
+                      </div>
+                    )}
+
+                    {feeResult.billingType === 'CREDIT_CARD' && feeResult.invoiceUrl && (
+                      <div className="space-y-3">
+                        <div className="bg-purple-50 border border-purple-200 rounded-2xl p-4 text-center">
+                          <p className="text-purple-700 font-bold">Cobrança criada!</p>
+                        </div>
+                        <a href={feeResult.invoiceUrl} target="_blank" rel="noopener noreferrer"
+                          className="flex items-center justify-center gap-2 w-full bg-purple-600 text-white py-4 rounded-2xl font-black hover:bg-purple-700 transition-colors"
+                        >
+                          <CreditCard size={18} /> Pagar com Cartão
+                        </a>
+                      </div>
+                    )}
+
+                    <button onClick={closeFeeModal}
+                      className="w-full bg-gray-100 text-gray-700 py-3 rounded-2xl font-bold hover:bg-gray-200 transition-colors text-sm"
+                    >
+                      Fechar — Aguardar Confirmação
+                    </button>
+                  </div>
+                )}
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+
+      {/* ── Modal: Compra de Pontos (para diferencial) ───────────────────────── */}
       <AnimatePresence>
         {payingExchangeId && (
           <motion.div
-            initial={{ opacity: 0 }}
-            animate={{ opacity: 1 }}
-            exit={{ opacity: 0 }}
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
             className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
             onClick={e => e.target === e.currentTarget && closePayModal()}
           >
             <motion.div
-              initial={{ scale: 0.9, opacity: 0 }}
-              animate={{ scale: 1, opacity: 1 }}
-              exit={{ scale: 0.9, opacity: 0 }}
+              initial={{ scale: 0.9, opacity: 0 }} animate={{ scale: 1, opacity: 1 }} exit={{ scale: 0.9, opacity: 0 }}
               className="bg-white rounded-3xl shadow-2xl w-full max-w-md overflow-hidden"
             >
               <div className="flex items-center justify-between p-6 border-b border-gray-100">
-                <h3 className="text-xl font-black text-gray-900">
-                  {payResult ? 'Realizar Pagamento' : 'Pagar Troca'}
-                </h3>
-                <button onClick={closePayModal} className="text-gray-400 hover:text-gray-600">
-                  <X size={24} />
-                </button>
+                <div>
+                  <h3 className="text-xl font-black text-gray-900">Comprar Pontos</h3>
+                  <p className="text-sm text-gray-400 mt-0.5">R$1 = 100 pontos</p>
+                </div>
+                <button onClick={closePayModal} className="text-gray-400 hover:text-gray-600"><X size={24} /></button>
               </div>
 
               <div className="p-6">
                 {!payResult ? (
                   <div className="space-y-4">
+                    <div className="bg-indigo-50 rounded-xl p-3 text-xs text-indigo-700">
+                      <strong>Para cobrir o diferencial de pontos</strong> entre as semanas.
+                      Os pontos entram na sua conta assim que o pagamento for confirmado.
+                    </div>
                     <div>
-                      <label className="block text-sm font-medium text-gray-700 mb-1">Valor da troca (R$)</label>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">Valor a depositar (R$)</label>
                       <input
                         type="number"
                         min={1}
@@ -398,14 +576,14 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                         className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
                       />
                       <p className="text-xs text-gray-400 mt-1">
-                        Compra de pontos para cobrir diferencial de semanas
+                        Você recebe {(payAmount * 100).toLocaleString('pt-BR')} pontos
                       </p>
                     </div>
 
                     <div className="space-y-2">
                       {[
-                        { type: 'PIX' as const, label: 'PIX', desc: 'Instantâneo', icon: QrCode },
-                        { type: 'BOLETO' as const, label: 'Boleto', desc: 'Até 3 dias úteis', icon: ExternalLink },
+                        { type: 'PIX' as const,         label: 'PIX',              desc: 'Instantâneo',        icon: QrCode },
+                        { type: 'BOLETO' as const,      label: 'Boleto',            desc: 'Até 3 dias úteis',   icon: ExternalLink },
                         { type: 'CREDIT_CARD' as const, label: 'Cartão de Crédito', desc: 'Aprovação imediata', icon: CreditCard },
                       ].map(({ type, label, desc, icon: Icon }) => (
                         <button
@@ -434,7 +612,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                       disabled={payLoading}
                       className="w-full bg-indigo-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-indigo-700 transition-colors disabled:opacity-50"
                     >
-                      {payLoading ? 'Gerando cobrança...' : `Pagar R$ ${payAmount.toFixed(2)}`}
+                      {payLoading ? 'Gerando cobrança...' : `Comprar ${(payAmount * 100).toLocaleString('pt-BR')} pontos — R$${payAmount}`}
                     </button>
                   </div>
                 ) : (
@@ -458,7 +636,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                             <p className="text-xs font-mono flex-1 truncate text-gray-700">{payResult.pixData.copyPaste}</p>
                             <button
                               onClick={handleCopyPix}
-                              className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold transition-colors flex items-center gap-1 ${
+                              className={`flex-shrink-0 px-3 py-1.5 rounded-lg text-xs font-bold flex items-center gap-1 transition-colors ${
                                 pixCopied ? 'bg-green-500 text-white' : 'bg-indigo-600 text-white hover:bg-indigo-700'
                               }`}
                             >
@@ -502,8 +680,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                       </div>
                     )}
 
-                    <button
-                      onClick={closePayModal}
+                    <button onClick={closePayModal}
                       className="w-full bg-gray-100 text-gray-700 py-3 rounded-2xl font-bold hover:bg-gray-200 transition-colors text-sm"
                     >
                       Fechar — Aguardar Confirmação
@@ -516,23 +693,19 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
         )}
       </AnimatePresence>
 
-      {/* Modal Comprovante */}
+      {/* ── Modal Comprovante ─────────────────────────────────────────────────── */}
       <AnimatePresence>
         {showContractId && (() => {
           const ex = exchanges.find(e => e.id === showContractId);
           if (!ex) return null;
           return (
             <motion.div
-              initial={{ opacity: 0 }}
-              animate={{ opacity: 1 }}
-              exit={{ opacity: 0 }}
+              initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
               className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4"
               onClick={() => setShowContractId(null)}
             >
               <motion.div
-                initial={{ scale: 0.9 }}
-                animate={{ scale: 1 }}
-                exit={{ scale: 0.9 }}
+                initial={{ scale: 0.9 }} animate={{ scale: 1 }} exit={{ scale: 0.9 }}
                 className="bg-white rounded-3xl shadow-2xl w-full max-w-md p-8"
                 onClick={e => e.stopPropagation()}
               >
@@ -559,11 +732,8 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                   </div>
                   <div className="flex justify-between py-2 border-b border-gray-100">
                     <span className="text-gray-500">Taxa WeekSwap</span>
-                    <span className="font-bold text-amber-600">
-                      {ex.fee_pts
-                        ? `${Number(ex.fee_pts).toLocaleString('pt-BR')} pts`
-                        : '10.000 pts'}
-                      {' '}({ex.fee_country === 'INTERNATIONAL' ? 'USD 50' : 'R$100'})
+                    <span className="font-bold text-emerald-600">
+                      {ex.fee_label || (ex.fee_country === 'INTERNATIONAL' ? 'USD 50 (R$255)' : 'R$100')}
                     </span>
                   </div>
                   <div className="flex justify-between py-2">
@@ -573,8 +743,7 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                 </div>
 
                 <p className="text-xs text-gray-400 text-center mb-4">
-                  Esta troca foi processada e registrada pela plataforma WeekSwap.
-                  O comprovante confirma a transferência de semanas entre as partes.
+                  Troca processada e registrada pela plataforma WeekSwap.
                 </p>
 
                 <button

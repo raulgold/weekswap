@@ -53,6 +53,12 @@ export const api = {
       body: JSON.stringify({ userId, exchangeId, country }),
     }),
 
+  createExchangeFeePayment: (userId: string, exchangeId: string, billingType: string, country: string, cpf?: string) =>
+    request<any>('/api/create-exchange-fee-payment', {
+      method: 'POST',
+      body: JSON.stringify({ userId, exchangeId, billingType, country, cpf }),
+    }),
+
   confirmExchange: (userId: string, exchangeId: string) =>
     request<{ success: boolean }>('/api/confirm-exchange', {
       method: 'POST',
