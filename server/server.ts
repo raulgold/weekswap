@@ -38,7 +38,7 @@ const ASAAS_API_KEY = process.env.ASAAS_API_KEY!;
 const ASAAS_API_URL = process.env.ASAAS_API_URL || 'https://api.asaas.com/v3';
 const ASAAS_WEBHOOK_TOKEN = process.env.ASAAS_WEBHOOK_TOKEN || '';
 
-async function asaasRequest(path: string, method: string, body?: any) {
+async function asaasRequest(path: string, method: string, body?: any): Promise<any> {
   const res = await fetch(`${ASAAS_API_URL}${path}`, {
     method,
     headers: {
@@ -693,7 +693,7 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
     const dueDateStr = dueDate.toISOString().split('T')[0];
 
     // Criar cobranÃƒÂ§a
-    const payment: any = await asaasRequest('/payments', 'POST', {
+    const payment = await asaasRequest('/payments', 'POST', {
       customer: asaasCustomerId,
       billingType,
       value: creditAmount, // R$ (1 crÃƒÂ©dito = R$1)
@@ -758,7 +758,7 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
 app.get('/api/asaas-payment/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const payment: any = await asaasRequest(`/payments/${paymentId}`, 'GET');
+    const payment = await asaasRequest(`/payments/${paymentId}`, 'GET');
     res.json({ status: payment.status, value: payment.value });
   } catch (error) {
     console.error('Erro ao verificar pagamento:', error);
