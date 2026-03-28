@@ -55,6 +55,75 @@ async function asaasRequest(path: string, method: string, body?: any): Promise<a
 }
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Rate Limiting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
+
+//  Engine de Valoracao de Semanas em Pontos 
+// Fatores: temporada, tipo unidade, capacidade, estado, estrelas, avaliacao,
+//          duracao, docs_verified
+function calcularPontosSemana(data: {
+  temporada: string;
+  tipo_unidade: string;
+  capacidade: string | number;
+  estado: string;
+  estrelas: number;
+  avaliacao: number;
+  check_in: string;
+  check_out: string;
+  docs_verified?: boolean;
+}): number {
+  // 1. Base por temporada
+  const t = (data.temporada || '').toLowerCase().replace(/\s+/g, '');
+  const base = t.startsWith('alt') ? 150000 : t.startsWith('bai') ? 60000 : 100000;
+
+  // 2. Multiplicador tipo de unidade
+  const tipo = (data.tipo_unidade || '').toLowerCase();
+  let tipoMult = 1.0;
+  if (/studio|flat|kitnet/.test(tipo)) tipoMult = 0.85;
+  else if (/3\s*q|tres|tr[ei]s/.test(tipo)) tipoMult = 1.50;
+  else if (/2\s*q|dois|duas/.test(tipo)) tipoMult = 1.25;
+
+  // 3. Multiplicador capacidade (numero de pessoas)
+  const cap = Number(data.capacidade) || 2;
+  const capMult = cap >= 8 ? 1.35 : cap >= 6 ? 1.20 : cap >= 4 ? 1.10 : 1.0;
+
+  // 4. Multiplicador estado (localizacao premium no Brasil)
+  const estadoMults: Record<string, number> = {
+    SC: 1.30, RJ: 1.30, PE: 1.25, BA: 1.20, CE: 1.15, SP: 1.10, ES: 1.05,
+  };
+  const estadoMult = estadoMults[(data.estado || '').toUpperCase().trim()] || 1.0;
+
+  // 5. Multiplicador estrelas (1 a 5)
+  const estrelas = Math.min(5, Math.max(1, Math.round(Number(data.estrelas) || 3)));
+  const estrelasMults: Record<number, number> = { 5: 1.40, 4: 1.20, 3: 1.0, 2: 0.80, 1: 0.60 };
+  const estrelasMult = estrelasMults[estrelas] ?? 1.0;
+
+  // 6. Multiplicador avaliacao (0 a 5 estrelas de usuarios)
+  const av = Math.min(5, Math.max(0, Number(data.avaliacao) || 3));
+  const avaliacaoMult = av >= 4.5 ? 1.20 : av >= 4.0 ? 1.10 : av >= 3.0 ? 1.00 : av >= 2.0 ? 0.90 : 0.80;
+
+  // 7. Multiplicador duracao (dias entre check-in e check-out)
+  const dias = Math.max(1, Math.round(
+    (new Date(data.check_out).getTime() - new Date(data.check_in).getTime()) / 86400000
+  ));
+  const duracaoMult = dias >= 14 ? 1.30 : dias >= 7 ? 1.00 : dias >= 5 ? 0.90 : 0.70;
+
+  // 8. Bonus por documentos verificados pelo admin
+  const docsMult = data.docs_verified ? 1.10 : 1.0;
+
+  const raw = base * tipoMult * capMult * estadoMult * estrelasMult * avaliacaoMult * duracaoMult * docsMult;
+  return Math.round(raw / 1000) * 1000; // arredondado ao milhar mais proximo
+}
+
+function labelPontosSemana(pontos: number): string {
+  if (pontos >= 200000) return 'Premium';
+  if (pontos >= 140000) return 'Luxo';
+  if (pontos >= 100000) return 'Superior';
+  if (pontos >= 70000)  return 'Standard';
+  return 'Economica';
+}
+
+// Taxa fixa de finalizacao de troca: 10.000 pontos = R$100
+const EXCHANGE_FEE = 10000;
+
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 100,
@@ -218,7 +287,23 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
     const resortProofPdfUrl = weekData.resortProofPdfUrl || null;
     const authLetterAccepted = weekData.authLetterAccepted === true;
 
-        const weekRef = await db.collection('weeks').add({
+        // Calcular pontos automaticamente com base nos dados da semana
+    const estrelas_val = Number(weekData.estrelas) || 3;
+    const avaliacao_val = Number(weekData.avaliacao) || 3;
+    const week_points = calcularPontosSemana({
+      temporada: weekData.temporada || '',
+      tipo_unidade: weekData.tipoUnidade || '',
+      capacidade: weekData.capacidade || '2',
+      estado: weekData.estado || '',
+      estrelas: estrelas_val,
+      avaliacao: avaliacao_val,
+      check_in: weekData.checkIn,
+      check_out: weekData.checkOut,
+      docs_verified: false,
+    });
+    const week_label = labelPontosSemana(week_points);
+
+            const weekRef = await db.collection('weeks').add({
       owner_id: userId,
       resort: weekData.resort,
       cidade: weekData.cidade || '',
@@ -238,6 +323,10 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       auth_letter_accepted: authLetterAccepted,
       docs_verified: false,
       gold_mode: false,
+      estrelas: estrelas_val,
+      avaliacao: avaliacao_val,
+      week_points,
+      week_label,
       created_at: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -248,21 +337,20 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
   }
 });
 
-// Iniciar troca
+// Iniciar troca (gratuito - taxa de R$100 cobrada apenas na finalizacao)
 app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, offeredWeekId, requestedWeekId } = req.body;
 
     if (!offeredWeekId || !requestedWeekId) {
-      return res.status(400).json({ error: 'IDs das semanas sÃƒÂ£o obrigatÃƒÂ³rios' });
+      return res.status(400).json({ error: 'IDs das semanas sao obrigatorios' });
     }
-
     if (offeredWeekId === requestedWeekId) {
-      return res.status(400).json({ error: 'NÃƒÂ£o ÃƒÂ© possÃƒÂ­vel trocar uma semana consigo mesmo' });
+      return res.status(400).json({ error: 'Nao e possivel trocar uma semana consigo mesmo' });
     }
 
-    // Usar transaÃƒÂ§ÃƒÂ£o para evitar race condition (dois usuÃƒÂ¡rios solicitando a mesma semana)
-    let exchangeId: string;
+    let exchangeId = '';
+
     await db.runTransaction(async (transaction) => {
       const offeredWeekRef = db.collection('weeks').doc(offeredWeekId);
       const requestedWeekRef = db.collection('weeks').doc(requestedWeekId);
@@ -273,42 +361,59 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
       ]);
 
       if (!offeredWeek.exists || !requestedWeek.exists) {
-        throw Object.assign(new Error('Semana nÃƒÂ£o encontrada'), { statusCode: 404 });
+        throw Object.assign(new Error('Semana nao encontrada'), { statusCode: 404 });
       }
-
       if (offeredWeek.data()?.owner_id !== userId) {
-        throw Object.assign(new Error('VocÃƒÂª nÃƒÂ£o ÃƒÂ© o dono desta semana'), { statusCode: 403 });
+        throw Object.assign(new Error('Voce nao e o dono desta semana'), { statusCode: 403 });
       }
-
       if (offeredWeek.data()?.status !== 'available') {
-        throw Object.assign(new Error('Sua semana nÃƒÂ£o estÃƒÂ¡ disponÃƒÂ­vel para troca'), { statusCode: 400 });
+        throw Object.assign(new Error('Sua semana nao esta disponivel para troca'), { statusCode: 400 });
       }
-
       if (requestedWeek.data()?.status !== 'available') {
-        throw Object.assign(new Error('A semana solicitada nÃƒÂ£o estÃƒÂ¡ mais disponÃƒÂ­vel'), { statusCode: 400 });
+        throw Object.assign(new Error('A semana solicitada nao esta mais disponivel'), { statusCode: 400 });
       }
-
       if (requestedWeek.data()?.owner_id === userId) {
-        throw Object.assign(new Error('VocÃƒÂª nÃƒÂ£o pode solicitar sua prÃƒÂ³pria semana'), { statusCode: 400 });
+        throw Object.assign(new Error('Voce nao pode solicitar sua propria semana'), { statusCode: 400 });
       }
 
-      // Marcar semana solicitada como "em negociaÃƒÂ§ÃƒÂ£o" atomicamente
+      // Registrar pontos de cada semana para exibicao (sem cobranca agora)
+      const oData = offeredWeek.data()!;
+      const rData = requestedWeek.data()!;
+      const reqPts: number = oData.week_points || calcularPontosSemana({
+        temporada: oData.temporada || '', tipo_unidade: oData.tipo_unidade || '',
+        capacidade: oData.capacidade || '2', estado: oData.estado || '',
+        estrelas: oData.estrelas || 3, avaliacao: oData.avaliacao || 3,
+        check_in: oData.check_in || '', check_out: oData.check_out || '',
+        docs_verified: oData.docs_verified || false,
+      });
+      const ownerPts: number = rData.week_points || calcularPontosSemana({
+        temporada: rData.temporada || '', tipo_unidade: rData.tipo_unidade || '',
+        capacidade: rData.capacidade || '2', estado: rData.estado || '',
+        estrelas: rData.estrelas || 3, avaliacao: rData.avaliacao || 3,
+        check_in: rData.check_in || '', check_out: rData.check_out || '',
+        docs_verified: rData.docs_verified || false,
+      });
+
+      // Marcar semana solicitada como em negociacao
       transaction.update(requestedWeekRef, { status: 'pending_exchange' });
 
       const newExchangeRef = db.collection('exchanges').doc();
       exchangeId = newExchangeRef.id;
       transaction.set(newExchangeRef, {
         requester_id: userId,
-        owner_id: requestedWeek.data()?.owner_id,
+        owner_id: rData.owner_id,
         offered_week_id: offeredWeekId,
         requested_week_id: requestedWeekId,
+        req_points: reqPts,
+        owner_points: ownerPts,
+        exchange_fee: EXCHANGE_FEE, // taxa fixa que sera cobrada na finalizacao
         exchange_status: 'pending',
         exchange_locked: false,
         created_at: admin.firestore.FieldValue.serverTimestamp(),
       });
     });
 
-    res.json({ success: true, exchangeId: exchangeId! });
+    res.json({ success: true, exchangeId, exchangeFee: EXCHANGE_FEE });
   } catch (error: any) {
     console.error('Erro ao iniciar troca:', error);
     const status = error.statusCode || 500;
@@ -316,24 +421,28 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
   }
 });
 
-// Confirmar troca (owner aceita a solicitaÃƒÂ§ÃƒÂ£o)
+// Confirmar troca (owner aceita a proposta - sem custo)
 app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, exchangeId } = req.body;
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
 
-    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nÃƒÂ£o encontrada' });
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
     const data = exchangeDoc.data()!;
 
     if (data.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode confirmar' });
-    if (data.exchange_status !== 'pending') return res.status(400).json({ error: 'Troca nÃƒÂ£o estÃƒÂ¡ pendente' });
+    if (data.exchange_status !== 'pending') return res.status(400).json({ error: 'Troca nao esta pendente' });
 
-    await exchangeRef.update({ exchange_status: 'confirmed' });
+    await exchangeRef.update({
+      exchange_status: 'confirmed',
+      confirmed_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
     res.json({ success: true });
-  } catch (error) {
+  } catch (error: any) {
     console.error('Erro ao confirmar troca:', error);
-    res.status(500).json({ error: 'Erro ao confirmar troca' });
+    res.status(500).json({ error: error.message || 'Erro ao confirmar troca' });
   }
 });
 
@@ -381,126 +490,86 @@ app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) =
   }
 });
 
-// Finalizar troca (com lÃƒÂ³gica financeira corrigida)
+// Finalizar troca - cobra taxa fixa de R$100 (10.000 pts) do dono
 app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, exchangeId } = req.body;
-
-    if (!exchangeId) {
-      return res.status(400).json({ error: 'exchangeId ÃƒÂ© obrigatÃƒÂ³rio' });
-    }
+    if (!exchangeId) return res.status(400).json({ error: 'exchangeId e obrigatorio' });
 
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
 
-    if (!exchangeDoc.exists) {
-      return res.status(404).json({ error: 'Troca nÃƒÂ£o encontrada' });
-    }
+    const exData = exchangeDoc.data()!;
 
-    const exchangeData = exchangeDoc.data()!;
+    if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja foi finalizada' });
+    if (exData.exchange_locked) return res.status(400).json({ error: 'Troca esta travada' });
+    if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode finalizar a troca' });
+    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
 
-    // ValidaÃƒÂ§ÃƒÂµes
-    if (exchangeData.exchange_status === 'FINALIZED') {
-      return res.status(400).json({ error: 'Troca jÃƒÂ¡ foi finalizada' });
-    }
+    const feeAmount: number = exData.exchange_fee || EXCHANGE_FEE;
 
-    if (exchangeData.exchange_locked) {
-      return res.status(400).json({ error: 'Troca estÃƒÂ¡ travada' });
-    }
-
-    if (exchangeData.owner_id !== userId) {
-      return res.status(403).json({ error: 'Apenas o dono pode completar a troca' });
-    }
-
-    if (exchangeData.exchange_status !== 'confirmed') {
-      return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
-    }
-
-    // Verificar escrow
-    const escrowRef = db.collection('escrows').doc(exchangeId);
-    const escrowDoc = await escrowRef.get();
-
-    if (!escrowDoc.exists) {
-      return res.status(400).json({ error: 'Escrow nÃƒÂ£o encontrado para esta troca' });
-    }
-
-    const escrowData = escrowDoc.data()!;
-    const totalAmount = escrowData.amount;
-
-    if (!totalAmount || totalAmount <= 0) {
-      return res.status(400).json({ error: 'Valor do escrow invÃƒÂ¡lido' });
-    }
-
-    const commissionAmount = Math.floor(totalAmount * COMMISSION_RATE);
-    const ownerAmount = totalAmount - commissionAmount;
-
-    // TransaÃƒÂ§ÃƒÂ£o atÃƒÂ´mica
     await db.runTransaction(async (transaction) => {
-      // Re-ler dentro da transaÃƒÂ§ÃƒÂ£o para garantir consistÃƒÂªncia
       const freshExchange = await transaction.get(exchangeRef);
-      if (freshExchange.data()?.exchange_locked) {
-        throw new Error('Troca foi travada durante o processamento');
+      if (freshExchange.data()?.exchange_locked) throw new Error('Troca foi travada durante o processamento');
+
+      // Verificar saldo do dono para pagar a taxa de finalizacao
+      const ownerRef = db.collection('users').doc(userId);
+      const ownerDoc = await transaction.get(ownerRef);
+      const ownerBalance = ownerDoc.data()?.credits_balance || 0;
+
+      if (ownerBalance < feeAmount) {
+        throw Object.assign(
+          new Error(`Saldo insuficiente para pagar a taxa de finalizacao. Voce precisa de ${feeAmount} pontos (R$${feeAmount / POINTS_PER_REAL}) mas tem ${ownerBalance} pontos.`),
+          { statusCode: 402 }
+        );
       }
 
-      // Atualizar a troca
+      // Cobrar taxa de finalizacao do dono (R$100 = 10.000 pts)
+      transaction.update(ownerRef, {
+        credits_balance: admin.firestore.FieldValue.increment(-feeAmount),
+      });
+
+      // Travar e finalizar a troca
       transaction.update(exchangeRef, {
         exchange_status: 'FINALIZED',
-        commission_rate: COMMISSION_RATE,
-        commission_amount: commissionAmount,
-        owner_amount: ownerAmount,
-        platform_amount: commissionAmount,
         exchange_locked: true,
+        fee_charged: feeAmount,
+        fee_payer: userId,
         finalized_at: admin.firestore.FieldValue.serverTimestamp(),
       });
 
-      // Atualizar saldo do dono
-      const ownerRef = db.collection('users').doc(exchangeData.owner_id);
-      transaction.update(ownerRef, {
-        credits_balance: admin.firestore.FieldValue.increment(ownerAmount),
-      });
-
-      // Atualizar status das semanas
-      const offeredWeekRef = db.collection('weeks').doc(exchangeData.offered_week_id);
-      const requestedWeekRef = db.collection('weeks').doc(exchangeData.requested_week_id);
-
+      // Marcar semanas como trocadas
+      const offeredWeekRef = db.collection('weeks').doc(exData.offered_week_id);
+      const requestedWeekRef = db.collection('weeks').doc(exData.requested_week_id);
       transaction.update(offeredWeekRef, { status: 'exchanged' });
       transaction.update(requestedWeekRef, { status: 'exchanged' });
-
-      // Atualizar escrow
-      transaction.update(escrowRef, {
-        status: 'released',
-        released_at: admin.firestore.FieldValue.serverTimestamp(),
-      });
     });
 
-    // Atualizar estatÃƒÂ­sticas e bÃƒÂ´nus (fora da transaÃƒÂ§ÃƒÂ£o Ã¢â‚¬â€ falhas nÃƒÂ£o afetam o resultado)
+    // Pos-transacao: estatisticas e bonus de indicacao
     try {
-      await updateGlobalStats(commissionAmount, 1);
-      await distributeReferralBonus(exchangeData.owner_id, totalAmount);
+      await updateGlobalStats(feeAmount, 1);
+      await distributeReferralBonus(exData.requester_id, feeAmount);
       await logAudit('EXCHANGE_FINALIZED', userId, {
         exchange_id: exchangeId,
-        total_amount: totalAmount,
-        commission_amount: commissionAmount,
-        owner_amount: ownerAmount,
-        owner_id: exchangeData.owner_id,
-        requester_id: exchangeData.requester_id,
+        fee_amount: feeAmount,
+        owner_id: exData.owner_id,
+        requester_id: exData.requester_id,
+        req_points: exData.req_points || 0,
+        owner_points: exData.owner_points || 0,
       });
     } catch (postErr) {
-      console.error('Erro em operaÃƒÂ§ÃƒÂµes pÃƒÂ³s-transaÃƒÂ§ÃƒÂ£o (nÃƒÂ£o crÃƒÂ­tico):', postErr);
+      console.error('Erro em operacoes pos-transacao (nao critico):', postErr);
     }
 
     res.json({
       success: true,
-      data: {
-        exchangeId,
-        totalAmount,
-        commissionAmount,
-        ownerAmount,
-      },
+      data: { exchangeId, feeAmount },
     });
   } catch (error: any) {
     console.error('Erro ao finalizar troca:', error);
-    res.status(500).json({ error: error.message || 'Erro ao finalizar troca' });
+    const status = error.statusCode || 500;
+    res.status(status).json({ error: error.message || 'Erro ao finalizar troca' });
   }
 });
 

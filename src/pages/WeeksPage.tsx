@@ -34,6 +34,7 @@ const defaultForm = {
   checkIn: '', checkOut: '', temporada: '', tipoUnidade: '',
   capacidade: '2', numeroCertificado: '', descricao: '',
   aceitaTroca: true, observacoes: '',
+  estrelas: '3', avaliacao: '3',
   contractPdfUrl: '', resortProofPdfUrl: '', authLetterAccepted: false,
 };
 
@@ -364,6 +365,41 @@ export function WeeksPage({ userId }: WeeksPageProps) {
               </div>
             </div>
 
+            {/* Estrelas do empreendimento + Avaliação */}
+            <div className="grid grid-cols-2 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Estrelas do Resort <span className="text-yellow-500">★</span>
+                  <span className="text-gray-400 font-normal ml-1">(classificação oficial)</span>
+                </label>
+                <div className="flex gap-2">
+                  {[1,2,3,4,5].map(n => (
+                    <button key={n} type="button"
+                      onClick={() => set('estrelas', String(n))}
+                      className={`flex-1 py-2 rounded-xl border text-sm font-bold transition-colors ${
+                        Number(form.estrelas) >= n
+                          ? 'bg-yellow-400 border-yellow-400 text-white'
+                          : 'border-gray-200 text-gray-400 hover:border-yellow-300'
+                      }`}
+                    >
+                      {n}★
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">
+                  Avaliação dos Hóspedes
+                  <span className="text-gray-400 font-normal ml-1">(média, ex: 4.5)</span>
+                </label>
+                <input type="number" min="0" max="5" step="0.1"
+                  value={form.avaliacao}
+                  onChange={e => set('avaliacao', e.target.value)}
+                  className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none"
+                  placeholder="0.0 – 5.0" />
+              </div>
+            </div>
+
             {/* Datas */}
             <div className="grid grid-cols-2 gap-4">
               <div>
@@ -577,6 +613,24 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                           {TEMPORADAS.find(t => t.value === week.temporada)?.label || week.temporada}
                         </span>
                       </div>
+                      {week.week_points && (
+                        <div className="flex items-center gap-2 mt-2">
+                          <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full border border-indigo-200">
+                            <Star size={10} className="fill-indigo-500" />
+                            {week.week_points.toLocaleString('pt-BR')} pts
+                          </span>
+                          {week.week_label && (
+                            <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
+                              {week.week_label}
+                            </span>
+                          )}
+                          {week.estrelas && (
+                            <span className="text-xs text-yellow-600 font-semibold">
+                              {'★'.repeat(Number(week.estrelas))}{'☆'.repeat(5 - Number(week.estrelas))}
+                            </span>
+                          )}
+                        </div>
+                      )}
                     </div>
 
                     <button
