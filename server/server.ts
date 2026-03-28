@@ -16,6 +16,9 @@ const admin = require('firebase-admin');
 const app = express();
 const PORT = process.env.PORT || 3001;
 const COMMISSION_RATE = 0.10; // 10% de comissÃƒÂ£o
+const POINTS_PER_REAL = 100;  // R$1 = 100 pontos (estilo RCI)
+const GOLD_MODE_PRICE = 200;  // R$200 para Modo Ouro
+const GOLD_MODE_DAYS = 30;    // Modo Ouro valido por 30 dias
 
 // Firebase Admin
 admin.initializeApp({
@@ -211,7 +214,11 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       return res.status(400).json({ error: 'VocÃƒÂª jÃƒÂ¡ publicou essa semana (mesmo resort e datas)' });
     }
 
-    const weekRef = await db.collection('weeks').add({
+    const contractPdfUrl = weekData.contractPdfUrl || null;
+    const resortProofPdfUrl = weekData.resortProofPdfUrl || null;
+    const authLetterAccepted = weekData.authLetterAccepted === true;
+
+        const weekRef = await db.collection('weeks').add({
       owner_id: userId,
       resort: weekData.resort,
       cidade: weekData.cidade || '',
@@ -226,6 +233,11 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       observacoes: weekData.observacoes || '',
       resort_entregue: weekData.resortEntregue === true,
       status: 'available',
+      contract_pdf_url: contractPdfUrl,
+      resort_proof_pdf_url: resortProofPdfUrl,
+      auth_letter_accepted: authLetterAccepted,
+      docs_verified: false,
+      gold_mode: false,
       created_at: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -625,6 +637,27 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
         exchange_id: batchData.exchange_id || null,
       });
       console.log(`Pagamento Asaas confirmado: ${batchData.amount} crÃƒÂ©ditos para ${batchData.user_id}`);
+
+      // Auto-ativar Modo Ouro se houver gold_payment associado
+      const goldQuery = await db.collection('gold_payments')
+        .where('asaas_payment_id', '==', payment.id).limit(1).get();
+      if (!goldQuery.empty) {
+        const gDoc = goldQuery.docs[0];
+        const gData = gDoc.data();
+        if (gData.status !== 'ACTIVE') {
+          const goldExpires = new Date();
+          goldExpires.setDate(goldExpires.getDate() + GOLD_MODE_DAYS);
+          const gb = db.batch();
+          gb.update(db.collection('weeks').doc(gData.week_id), {
+            gold_mode: true,
+            gold_expires_at: admin.firestore.Timestamp.fromDate(goldExpires),
+            gold_activated_at: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          gb.update(gDoc.ref, { status: 'ACTIVE', activated_at: admin.firestore.FieldValue.serverTimestamp() });
+          await gb.commit();
+          console.log(`Modo Ouro ativado automaticamente: ${gData.week_id}`);
+        }
+      }
     }
 
     res.json({ received: true });
@@ -697,13 +730,14 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
     dueDate.setDate(dueDate.getDate() + 1);
     const dueDateStr = dueDate.toISOString().split('T')[0];
 
-    // Criar cobranÃƒÂ§a
+    // Criar cobranca (value em R$ para Asaas, pontos = amount * POINTS_PER_REAL)
+    const pontosRecebidos = amount * POINTS_PER_REAL;
     const payment = await asaasRequest('/payments', 'POST', {
       customer: asaasCustomerId,
       billingType,
-      value: creditAmount, // R$ (1 crÃƒÂ©dito = R$1)
+      value: amount,
       dueDate: dueDateStr,
-      description: `${creditAmount} crÃƒÂ©ditos WeekSwap`,
+      description: `${pontosRecebidos} pontos WeekSwap (R$${amount.toFixed(2)})`,
       externalReference: `${userId}_${Date.now()}`,
     });
 
@@ -712,10 +746,11 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
       return res.status(500).json({ error: 'Erro ao criar cobranÃƒÂ§a', details: payment.errors || payment });
     }
 
-    // Registrar lote de crÃƒÂ©ditos pendente
+    // Registrar lote de pontos pendente (100 pontos por R$1)
     await db.collection('credit_batches').add({
       user_id: userId,
-      amount: creditAmount,
+      amount: pontosRecebidos,
+      amount_reais: amount,
       status: 'PENDING_CLEARANCE',
       asaas_payment_id: payment.id,
       asaas_billing_type: billingType,
@@ -723,11 +758,10 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
       created_at: admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Incrementar pending_credits
+    // Incrementar pending_credits (em pontos)
     await db.collection('users').doc(userId).update({
-      pending_credits: admin.firestore.FieldValue.increment(creditAmount),
+      pending_credits: admin.firestore.FieldValue.increment(pontosRecebidos),
     });
-
     // Buscar dados adicionais do pagamento (QR code PIX, link boleto)
     let pixData = null;
     let boletoUrl = null;
@@ -796,19 +830,156 @@ app.post('/api/register-referral', express.json(), async (req, res) => {
   }
 });
 
-// Buscar semanas disponÃƒÂ­veis
+// Criar cobranca Modo Ouro (R$200 para destacar semana no topo)
+app.post('/api/create-gold-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
+  try {
+    const { userId, weekId, billingType = 'PIX', cpf } = req.body;
+    if (!weekId) return res.status(400).json({ error: 'weekId e obrigatorio' });
+
+    const weekDoc = await db.collection('weeks').doc(weekId).get();
+    if (!weekDoc.exists) return res.status(404).json({ error: 'Semana nao encontrada' });
+    if (weekDoc.data()?.owner_id !== userId) return res.status(403).json({ error: 'Voce nao e o dono desta semana' });
+
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) return res.status(404).json({ error: 'Usuario nao encontrado' });
+    const userData = userDoc.data()!;
+
+    const cpfCnpj = cpf || userData.cpf || '';
+    let asaasCustomerId = userData.asaas_customer_id;
+
+    if (!asaasCustomerId) {
+      if (!cpfCnpj) return res.status(400).json({ error: 'CPF e obrigatorio' });
+      const customer = await asaasRequest('/customers', 'POST', {
+        name: userData.name || 'Cliente WeekSwap',
+        email: userData.email,
+        cpfCnpj,
+        externalReference: userId,
+      });
+      if (!customer.id) return res.status(500).json({ error: 'Erro ao criar cliente Asaas' });
+      asaasCustomerId = customer.id;
+      const upd: Record<string, any> = { asaas_customer_id: asaasCustomerId };
+      if (cpf) upd.cpf = cpf;
+      await db.collection('users').doc(userId).update(upd);
+    }
+
+    const dueDate = new Date();
+    dueDate.setDate(dueDate.getDate() + 1);
+    const dueDateStr = dueDate.toISOString().split('T')[0];
+    const validTypes = ['PIX', 'BOLETO', 'CREDIT_CARD'];
+    const bt = validTypes.includes(billingType) ? billingType : 'PIX';
+
+    const payment = await asaasRequest('/payments', 'POST', {
+      customer: asaasCustomerId,
+      billingType: bt,
+      value: GOLD_MODE_PRICE,
+      dueDate: dueDateStr,
+      description: `Modo Ouro WeekSwap — semana ${weekId.slice(0, 8)} (30 dias)`,
+      externalReference: `gold_${userId}_${weekId}_${Date.now()}`,
+    });
+
+    if (!payment.id) {
+      return res.status(500).json({ error: 'Erro ao criar cobranca Modo Ouro', details: payment.errors || payment });
+    }
+
+    await db.collection('gold_payments').add({
+      user_id: userId,
+      week_id: weekId,
+      asaas_payment_id: payment.id,
+      billing_type: bt,
+      value: GOLD_MODE_PRICE,
+      status: 'PENDING',
+      created_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+
+    let pixData = null;
+    let boletoUrl = null;
+    if (bt === 'PIX') {
+      const pixInfo = await asaasRequest(`/payments/${payment.id}/pixQrCode`, 'GET');
+      pixData = { qrCodeImage: pixInfo.encodedImage, copyPaste: pixInfo.payload, expirationDate: pixInfo.expirationDate };
+    } else if (bt === 'BOLETO') {
+      boletoUrl = payment.bankSlipUrl || null;
+    }
+
+    res.json({ success: true, paymentId: payment.id, billingType: bt, value: GOLD_MODE_PRICE, pixData, boletoUrl, invoiceUrl: payment.invoiceUrl });
+  } catch (error: any) {
+    console.error('Erro ao criar pagamento Modo Ouro:', error);
+    res.status(500).json({ error: error.message || 'Erro ao criar pagamento Modo Ouro' });
+  }
+});
+
+// Ativar Modo Ouro apos confirmacao de pagamento
+app.post('/api/activate-gold-mode', express.json(), verifyToken, async (req, res) => {
+  try {
+    const { userId, weekId, paymentId } = req.body;
+    if (!weekId || !paymentId) return res.status(400).json({ error: 'weekId e paymentId sao obrigatorios' });
+
+    const payment = await asaasRequest(`/payments/${paymentId}`, 'GET');
+    if (!['RECEIVED', 'CONFIRMED'].includes(payment.status)) {
+      return res.status(400).json({ error: `Pagamento nao confirmado. Status: ${payment.status}` });
+    }
+
+    const gpQuery = await db.collection('gold_payments')
+      .where('asaas_payment_id', '==', paymentId)
+      .where('user_id', '==', userId)
+      .limit(1).get();
+    if (gpQuery.empty) return res.status(404).json({ error: 'Pagamento Modo Ouro nao encontrado' });
+
+    const gpDoc = gpQuery.docs[0];
+    if (gpDoc.data().status === 'ACTIVE') return res.json({ success: true, message: 'Modo Ouro ja ativado' });
+
+    const goldExpires = new Date();
+    goldExpires.setDate(goldExpires.getDate() + GOLD_MODE_DAYS);
+
+    const batch = db.batch();
+    batch.update(db.collection('weeks').doc(weekId), {
+      gold_mode: true,
+      gold_expires_at: admin.firestore.Timestamp.fromDate(goldExpires),
+      gold_activated_at: admin.firestore.FieldValue.serverTimestamp(),
+    });
+    batch.update(gpDoc.ref, { status: 'ACTIVE', activated_at: admin.firestore.FieldValue.serverTimestamp() });
+    await batch.commit();
+
+    await logAudit('GOLD_MODE_ACTIVATED', userId, { week_id: weekId, payment_id: paymentId, expires_at: goldExpires });
+    res.json({ success: true, goldExpiresAt: goldExpires.toISOString() });
+  } catch (error: any) {
+    console.error('Erro ao ativar Modo Ouro:', error);
+    res.status(500).json({ error: error.message || 'Erro ao ativar Modo Ouro' });
+  }
+});
+
+// Verificar status do pagamento Modo Ouro
+app.get('/api/gold-payment-status/:paymentId', async (req, res) => {
+  try {
+    const { paymentId } = req.params;
+    const payment = await asaasRequest(`/payments/${paymentId}`, 'GET');
+    res.json({ status: payment.status, value: payment.value });
+  } catch (error) {
+    res.status(500).json({ error: 'Erro ao verificar pagamento' });
+  }
+});
+
+// Buscar semanas disponiveis (Modo Ouro sempre primeiro)
 app.get('/api/weeks', async (req, res) => {
   try {
     const snapshot = await db
       .collection('weeks')
       .where('status', '==', 'available')
-      .limit(50)
+      .limit(100)
       .get();
 
-    const weeks = snapshot.docs.map((doc) => ({
-      id: doc.id,
-      ...doc.data(),
-    }));
+    const now = new Date();
+    const weeks = snapshot.docs
+      .map((doc) => {
+        const data = doc.data();
+        const goldExpires = data.gold_expires_at?.toDate?.();
+        const isGoldActive = data.gold_mode === true && goldExpires && goldExpires > now;
+        return { id: doc.id, ...data, is_gold_active: isGoldActive };
+      })
+      .sort((a: any, b: any) => {
+        if (a.is_gold_active && !b.is_gold_active) return -1;
+        if (!a.is_gold_active && b.is_gold_active) return 1;
+        return (b.created_at?._seconds || 0) - (a.created_at?._seconds || 0);
+      });
 
     res.json({ weeks });
   } catch (error) {

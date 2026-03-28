@@ -11,28 +11,19 @@ async function getAuthHeaders(): Promise<Record<string, string>> {
       headers['Authorization'] = `Bearer ${token}`;
     }
   } catch {
-    // Continue sem token — servidor usará userId do body como fallback
+    // Continue sem token
   }
   return headers;
 }
 
 async function request<T>(endpoint: string, options?: RequestInit): Promise<T> {
   const authHeaders = await getAuthHeaders();
-
   const res = await fetch(`${API_URL}${endpoint}`, {
     ...options,
-    headers: {
-      ...authHeaders,
-      ...(options?.headers || {}),
-    },
+    headers: { ...authHeaders, ...(options?.headers || {}) },
   });
-
   const data = await res.json();
-
-  if (!res.ok) {
-    throw new Error(data.error || 'Erro na requisição');
-  }
-
+  if (!res.ok) throw new Error(data.error || 'Erro na requisicao');
   return data;
 }
 
@@ -74,7 +65,7 @@ export const api = {
       body: JSON.stringify({ userId, exchangeId }),
     }),
 
-  // Asaas
+  // Asaas — pontos (R$1 = 100 pontos)
   createAsaasPayment: (userId: string, creditAmount: number, billingType: string, cpf?: string, exchangeId?: string) =>
     request<any>('/api/create-asaas-payment', {
       method: 'POST',
@@ -84,6 +75,22 @@ export const api = {
   getAsaasPaymentStatus: (paymentId: string) =>
     request<{ status: string; value: number }>(`/api/asaas-payment/${paymentId}`),
 
-  // Usuário
+  // Modo Ouro
+  createGoldPayment: (userId: string, weekId: string, billingType: string, cpf?: string) =>
+    request<any>('/api/create-gold-payment', {
+      method: 'POST',
+      body: JSON.stringify({ userId, weekId, billingType, cpf }),
+    }),
+
+  activateGoldMode: (userId: string, weekId: string, paymentId: string) =>
+    request<any>('/api/activate-gold-mode', {
+      method: 'POST',
+      body: JSON.stringify({ userId, weekId, paymentId }),
+    }),
+
+  getGoldPaymentStatus: (paymentId: string) =>
+    request<{ status: string; value: number }>(`/api/gold-payment-status/${paymentId}`),
+
+  // Usuario
   getUser: (userId: string) => request<any>(`/api/user/${userId}`),
 };
