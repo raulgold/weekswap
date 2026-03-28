@@ -6,16 +6,16 @@ import { readFileSync } from 'fs';
 import { config } from 'dotenv';
 import rateLimit from 'express-rate-limit';
 
-// Carregar variáveis de ambiente
+// Carregar variÃƒÂ¡veis de ambiente
 config();
 
 const require = createRequire(import.meta.url);
 const admin = require('firebase-admin');
 
-// ─── Configuração ───────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ ConfiguraÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const app = express();
 const PORT = process.env.PORT || 3001;
-const COMMISSION_RATE = 0.10; // 10% de comissão
+const COMMISSION_RATE = 0.10; // 10% de comissÃƒÂ£o
 
 // Firebase Admin
 admin.initializeApp({
@@ -51,13 +51,13 @@ async function asaasRequest(path: string, method: string, body?: any) {
   return res.json();
 }
 
-// ─── Rate Limiting ───────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Rate Limiting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const generalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutos
   max: 100,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Muitas requisições. Tente novamente em alguns minutos.' },
+  message: { error: 'Muitas requisiÃƒÂ§ÃƒÂµes. Tente novamente em alguns minutos.' },
 });
 
 const paymentLimiter = rateLimit({
@@ -65,14 +65,14 @@ const paymentLimiter = rateLimit({
   max: 10,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Limite de cobranças atingido. Tente novamente em 1 hora.' },
+  message: { error: 'Limite de cobranÃƒÂ§as atingido. Tente novamente em 1 hora.' },
 });
 
 // CORS
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
 app.use('/api', generalLimiter);
 
-// ─── Webhook do Stripe (DEVE vir ANTES do express.json global) ──
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Webhook do Stripe (DEVE vir ANTES do express.json global) Ã¢â€â‚¬Ã¢â€â‚¬
 // O Stripe exige o body raw para validar a assinatura
 app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, res) => {
   const sig = req.headers['stripe-signature'] as string;
@@ -106,7 +106,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
       }
 
       default:
-        console.log(`Evento não tratado: ${event.type}`);
+        console.log(`Evento nÃƒÂ£o tratado: ${event.type}`);
     }
 
     res.json({ received: true });
@@ -116,7 +116,7 @@ app.post('/api/webhook', express.raw({ type: 'application/json' }), async (req, 
   }
 });
 
-// ─── Middleware de Verificação Firebase Auth ─────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Middleware de VerificaÃƒÂ§ÃƒÂ£o Firebase Auth Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const verifyToken = async (
   req: express.Request,
   res: express.Response,
@@ -134,7 +134,7 @@ const verifyToken = async (
     req.body._verifiedUid = decoded.uid;
     next();
   } catch {
-    return res.status(401).json({ error: 'Token inválido ou expirado' });
+    return res.status(401).json({ error: 'Token invÃƒÂ¡lido ou expirado' });
   }
 };
 
@@ -143,7 +143,7 @@ function getAuthUserId(req: express.Request): string | null {
   return req.body._verifiedUid || req.body.userId || null;
 }
 
-// ─── Middleware de Bloqueio por Risco ────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Middleware de Bloqueio por Risco Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const checkRiskLocked = async (
   req: express.Request,
   res: express.Response,
@@ -151,7 +151,7 @@ const checkRiskLocked = async (
 ) => {
   const userId = getAuthUserId(req);
   if (!userId) {
-    return res.status(400).json({ error: 'userId é obrigatório' });
+    return res.status(400).json({ error: 'userId ÃƒÂ© obrigatÃƒÂ³rio' });
   }
   req.body.userId = userId; // ensure body.userId is always the verified one
 
@@ -160,7 +160,7 @@ const checkRiskLocked = async (
     if (userDoc.exists && userDoc.data()?.account_status === 'RISK_LOCKED') {
       return res.status(403).json({
         error: 'ACCOUNT_LOCKED',
-        message: 'Sua conta está bloqueada por motivos de segurança. Entre em contato com o suporte.',
+        message: 'Sua conta estÃƒÂ¡ bloqueada por motivos de seguranÃƒÂ§a. Entre em contato com o suporte.',
       });
     }
     next();
@@ -170,7 +170,7 @@ const checkRiskLocked = async (
   }
 };
 
-// ─── Rotas da API ───────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Rotas da API Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 // Submeter semana para troca
 app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
@@ -181,20 +181,20 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       return res.status(400).json({ error: 'Dados da semana incompletos' });
     }
 
-    // Validação de datas
+    // ValidaÃƒÂ§ÃƒÂ£o de datas
     const checkInDate = new Date(weekData.checkIn);
     const checkOutDate = new Date(weekData.checkOut);
     const today = new Date();
     today.setHours(0, 0, 0, 0);
 
     if (isNaN(checkInDate.getTime()) || isNaN(checkOutDate.getTime())) {
-      return res.status(400).json({ error: 'Datas inválidas' });
+      return res.status(400).json({ error: 'Datas invÃƒÂ¡lidas' });
     }
     if (checkOutDate <= checkInDate) {
-      return res.status(400).json({ error: 'Check-out deve ser após o check-in' });
+      return res.status(400).json({ error: 'Check-out deve ser apÃƒÂ³s o check-in' });
     }
     if (checkInDate < today) {
-      return res.status(400).json({ error: 'Check-in não pode ser no passado' });
+      return res.status(400).json({ error: 'Check-in nÃƒÂ£o pode ser no passado' });
     }
 
     // Prevenir semanas duplicadas
@@ -208,7 +208,7 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       .get();
 
     if (!duplicate.empty) {
-      return res.status(400).json({ error: 'Você já publicou essa semana (mesmo resort e datas)' });
+      return res.status(400).json({ error: 'VocÃƒÂª jÃƒÂ¡ publicou essa semana (mesmo resort e datas)' });
     }
 
     const weekRef = await db.collection('weeks').add({
@@ -242,14 +242,14 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
     const { userId, offeredWeekId, requestedWeekId } = req.body;
 
     if (!offeredWeekId || !requestedWeekId) {
-      return res.status(400).json({ error: 'IDs das semanas são obrigatórios' });
+      return res.status(400).json({ error: 'IDs das semanas sÃƒÂ£o obrigatÃƒÂ³rios' });
     }
 
     if (offeredWeekId === requestedWeekId) {
-      return res.status(400).json({ error: 'Não é possível trocar uma semana consigo mesmo' });
+      return res.status(400).json({ error: 'NÃƒÂ£o ÃƒÂ© possÃƒÂ­vel trocar uma semana consigo mesmo' });
     }
 
-    // Usar transação para evitar race condition (dois usuários solicitando a mesma semana)
+    // Usar transaÃƒÂ§ÃƒÂ£o para evitar race condition (dois usuÃƒÂ¡rios solicitando a mesma semana)
     let exchangeId: string;
     await db.runTransaction(async (transaction) => {
       const offeredWeekRef = db.collection('weeks').doc(offeredWeekId);
@@ -261,26 +261,26 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
       ]);
 
       if (!offeredWeek.exists || !requestedWeek.exists) {
-        throw Object.assign(new Error('Semana não encontrada'), { statusCode: 404 });
+        throw Object.assign(new Error('Semana nÃƒÂ£o encontrada'), { statusCode: 404 });
       }
 
       if (offeredWeek.data()?.owner_id !== userId) {
-        throw Object.assign(new Error('Você não é o dono desta semana'), { statusCode: 403 });
+        throw Object.assign(new Error('VocÃƒÂª nÃƒÂ£o ÃƒÂ© o dono desta semana'), { statusCode: 403 });
       }
 
       if (offeredWeek.data()?.status !== 'available') {
-        throw Object.assign(new Error('Sua semana não está disponível para troca'), { statusCode: 400 });
+        throw Object.assign(new Error('Sua semana nÃƒÂ£o estÃƒÂ¡ disponÃƒÂ­vel para troca'), { statusCode: 400 });
       }
 
       if (requestedWeek.data()?.status !== 'available') {
-        throw Object.assign(new Error('A semana solicitada não está mais disponível'), { statusCode: 400 });
+        throw Object.assign(new Error('A semana solicitada nÃƒÂ£o estÃƒÂ¡ mais disponÃƒÂ­vel'), { statusCode: 400 });
       }
 
       if (requestedWeek.data()?.owner_id === userId) {
-        throw Object.assign(new Error('Você não pode solicitar sua própria semana'), { statusCode: 400 });
+        throw Object.assign(new Error('VocÃƒÂª nÃƒÂ£o pode solicitar sua prÃƒÂ³pria semana'), { statusCode: 400 });
       }
 
-      // Marcar semana solicitada como "em negociação" atomicamente
+      // Marcar semana solicitada como "em negociaÃƒÂ§ÃƒÂ£o" atomicamente
       transaction.update(requestedWeekRef, { status: 'pending_exchange' });
 
       const newExchangeRef = db.collection('exchanges').doc();
@@ -304,18 +304,18 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
   }
 });
 
-// Confirmar troca (owner aceita a solicitação)
+// Confirmar troca (owner aceita a solicitaÃƒÂ§ÃƒÂ£o)
 app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, exchangeId } = req.body;
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
 
-    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca não encontrada' });
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nÃƒÂ£o encontrada' });
     const data = exchangeDoc.data()!;
 
     if (data.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode confirmar' });
-    if (data.exchange_status !== 'pending') return res.status(400).json({ error: 'Troca não está pendente' });
+    if (data.exchange_status !== 'pending') return res.status(400).json({ error: 'Troca nÃƒÂ£o estÃƒÂ¡ pendente' });
 
     await exchangeRef.update({ exchange_status: 'confirmed' });
     res.json({ success: true });
@@ -329,20 +329,20 @@ app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, 
 app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) => {
   try {
     const userId = getAuthUserId(req);
-    if (!userId) return res.status(400).json({ error: 'userId é obrigatório' });
+    if (!userId) return res.status(400).json({ error: 'userId ÃƒÂ© obrigatÃƒÂ³rio' });
 
     const { exchangeId } = req.body;
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
 
-    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca não encontrada' });
+    if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nÃƒÂ£o encontrada' });
     const data = exchangeDoc.data()!;
 
     if (data.owner_id !== userId && data.requester_id !== userId) {
-      return res.status(403).json({ error: 'Sem permissão para cancelar' });
+      return res.status(403).json({ error: 'Sem permissÃƒÂ£o para cancelar' });
     }
     if (['FINALIZED', 'cancelled'].includes(data.exchange_status)) {
-      return res.status(400).json({ error: 'Troca não pode ser cancelada neste estado' });
+      return res.status(400).json({ error: 'Troca nÃƒÂ£o pode ser cancelada neste estado' });
     }
 
     // Restaurar status da semana solicitada para 'available'
@@ -369,31 +369,31 @@ app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) =
   }
 });
 
-// Finalizar troca (com lógica financeira corrigida)
+// Finalizar troca (com lÃƒÂ³gica financeira corrigida)
 app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, exchangeId } = req.body;
 
     if (!exchangeId) {
-      return res.status(400).json({ error: 'exchangeId é obrigatório' });
+      return res.status(400).json({ error: 'exchangeId ÃƒÂ© obrigatÃƒÂ³rio' });
     }
 
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
 
     if (!exchangeDoc.exists) {
-      return res.status(404).json({ error: 'Troca não encontrada' });
+      return res.status(404).json({ error: 'Troca nÃƒÂ£o encontrada' });
     }
 
     const exchangeData = exchangeDoc.data()!;
 
-    // Validações
+    // ValidaÃƒÂ§ÃƒÂµes
     if (exchangeData.exchange_status === 'FINALIZED') {
-      return res.status(400).json({ error: 'Troca já foi finalizada' });
+      return res.status(400).json({ error: 'Troca jÃƒÂ¡ foi finalizada' });
     }
 
     if (exchangeData.exchange_locked) {
-      return res.status(400).json({ error: 'Troca está travada' });
+      return res.status(400).json({ error: 'Troca estÃƒÂ¡ travada' });
     }
 
     if (exchangeData.owner_id !== userId) {
@@ -409,22 +409,22 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
     const escrowDoc = await escrowRef.get();
 
     if (!escrowDoc.exists) {
-      return res.status(400).json({ error: 'Escrow não encontrado para esta troca' });
+      return res.status(400).json({ error: 'Escrow nÃƒÂ£o encontrado para esta troca' });
     }
 
     const escrowData = escrowDoc.data()!;
     const totalAmount = escrowData.amount;
 
     if (!totalAmount || totalAmount <= 0) {
-      return res.status(400).json({ error: 'Valor do escrow inválido' });
+      return res.status(400).json({ error: 'Valor do escrow invÃƒÂ¡lido' });
     }
 
     const commissionAmount = Math.floor(totalAmount * COMMISSION_RATE);
     const ownerAmount = totalAmount - commissionAmount;
 
-    // Transação atômica
+    // TransaÃƒÂ§ÃƒÂ£o atÃƒÂ´mica
     await db.runTransaction(async (transaction) => {
-      // Re-ler dentro da transação para garantir consistência
+      // Re-ler dentro da transaÃƒÂ§ÃƒÂ£o para garantir consistÃƒÂªncia
       const freshExchange = await transaction.get(exchangeRef);
       if (freshExchange.data()?.exchange_locked) {
         throw new Error('Troca foi travada durante o processamento');
@@ -461,7 +461,7 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
       });
     });
 
-    // Atualizar estatísticas e bônus (fora da transação — falhas não afetam o resultado)
+    // Atualizar estatÃƒÂ­sticas e bÃƒÂ´nus (fora da transaÃƒÂ§ÃƒÂ£o Ã¢â‚¬â€ falhas nÃƒÂ£o afetam o resultado)
     try {
       await updateGlobalStats(commissionAmount, 1);
       await distributeReferralBonus(exchangeData.owner_id, totalAmount);
@@ -474,7 +474,7 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
         requester_id: exchangeData.requester_id,
       });
     } catch (postErr) {
-      console.error('Erro em operações pós-transação (não crítico):', postErr);
+      console.error('Erro em operaÃƒÂ§ÃƒÂµes pÃƒÂ³s-transaÃƒÂ§ÃƒÂ£o (nÃƒÂ£o crÃƒÂ­tico):', postErr);
     }
 
     res.json({
@@ -492,16 +492,16 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
   }
 });
 
-// Criar sessão de checkout do Stripe
+// Criar sessÃƒÂ£o de checkout do Stripe
 app.post('/api/create-checkout-session', express.json(), checkRiskLocked, async (req, res) => {
   try {
     const { userId, creditAmount, exchangeId } = req.body;
 
     if (!creditAmount || creditAmount <= 0) {
-      return res.status(400).json({ error: 'Valor de créditos inválido' });
+      return res.status(400).json({ error: 'Valor de crÃƒÂ©ditos invÃƒÂ¡lido' });
     }
 
-    // Preço em centavos (R$1 = 100 centavos)
+    // PreÃƒÂ§o em centavos (R$1 = 100 centavos)
     const unitPrice = 100;
 
     const session = await stripe.checkout.sessions.create({
@@ -511,8 +511,8 @@ app.post('/api/create-checkout-session', express.json(), checkRiskLocked, async 
           price_data: {
             currency: 'brl',
             product_data: {
-              name: 'Créditos WeekSwap',
-              description: `${creditAmount} créditos para trocas`,
+              name: 'CrÃƒÂ©ditos WeekSwap',
+              description: `${creditAmount} crÃƒÂ©ditos para trocas`,
             },
             unit_amount: unitPrice,
           },
@@ -531,19 +531,19 @@ app.post('/api/create-checkout-session', express.json(), checkRiskLocked, async 
 
     res.json({ sessionId: session.id, url: session.url });
   } catch (error) {
-    console.error('Erro ao criar sessão de checkout:', error);
-    res.status(500).json({ error: 'Erro ao criar sessão de pagamento' });
+    console.error('Erro ao criar sessÃƒÂ£o de checkout:', error);
+    res.status(500).json({ error: 'Erro ao criar sessÃƒÂ£o de pagamento' });
   }
 });
 
-// ─── Asaas: Webhook de confirmação de pagamento ─────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Asaas: Webhook de confirmaÃƒÂ§ÃƒÂ£o de pagamento Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 app.post('/api/asaas-webhook', express.json(), async (req, res) => {
   try {
-    // Verificar token de autenticação do webhook (configurado no painel Asaas)
+    // Verificar token de autenticaÃƒÂ§ÃƒÂ£o do webhook (configurado no painel Asaas)
     if (ASAAS_WEBHOOK_TOKEN) {
       const incomingToken = req.headers['asaas-access-token'] as string;
       if (incomingToken !== ASAAS_WEBHOOK_TOKEN) {
-        console.warn('Webhook Asaas: token inválido rejeitado');
+        console.warn('Webhook Asaas: token invÃƒÂ¡lido rejeitado');
         return res.status(401).json({ error: 'Unauthorized' });
       }
     }
@@ -555,7 +555,7 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
       const payment = event.payment;
       if (!payment) return res.json({ received: true });
 
-      // Buscar lote de créditos pelo ID do pagamento Asaas
+      // Buscar lote de crÃƒÂ©ditos pelo ID do pagamento Asaas
       const batchQuery = await db
         .collection('credit_batches')
         .where('asaas_payment_id', '==', payment.id)
@@ -570,9 +570,9 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
       const batchDoc = batchQuery.docs[0];
       const batchData = batchDoc.data();
 
-      // Idempotência: ignorar se já processado
+      // IdempotÃƒÂªncia: ignorar se jÃƒÂ¡ processado
       if (batchData.status !== 'PENDING_CLEARANCE') {
-        console.log('Webhook Asaas: pagamento já processado', payment.id);
+        console.log('Webhook Asaas: pagamento jÃƒÂ¡ processado', payment.id);
         return res.json({ received: true });
       }
 
@@ -588,7 +588,7 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
         }
 
         if (freshBatch.data()?.status !== 'PENDING_CLEARANCE') {
-          return; // Outro processo já confirmou
+          return; // Outro processo jÃƒÂ¡ confirmou
         }
 
         // Agora todas as escritas
@@ -619,7 +619,7 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
         credit_amount: batchData.amount,
         exchange_id: batchData.exchange_id || null,
       });
-      console.log(`Pagamento Asaas confirmado: ${batchData.amount} créditos para ${batchData.user_id}`);
+      console.log(`Pagamento Asaas confirmado: ${batchData.amount} crÃƒÂ©ditos para ${batchData.user_id}`);
     }
 
     res.json({ received: true });
@@ -629,7 +629,7 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
   }
 });
 
-// Criar cobrança Asaas (PIX, boleto ou cartão)
+// Criar cobranÃƒÂ§a Asaas (PIX, boleto ou cartÃƒÂ£o)
 app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
   try {
     const { userId, creditAmount, exchangeId, billingType, cpf } = req.body;
@@ -637,23 +637,23 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
 
     const amount = Number(creditAmount);
     if (!amount || amount < 5 || amount > 100000) {
-      return res.status(400).json({ error: 'Valor mínimo: R$5,00. Máximo: R$100.000' });
+      return res.status(400).json({ error: 'Valor mÃƒÂ­nimo: R$5,00. MÃƒÂ¡ximo: R$100.000' });
     }
 
     const validTypes = ['PIX', 'BOLETO', 'CREDIT_CARD'];
     if (!validTypes.includes(billingType)) {
-      return res.status(400).json({ error: 'Tipo de pagamento inválido' });
+      return res.status(400).json({ error: 'Tipo de pagamento invÃƒÂ¡lido' });
     }
 
     // Validar exchangeId se fornecido
     if (exchangeId && !/^[a-zA-Z0-9]{10,30}$/.test(exchangeId)) {
-      return res.status(400).json({ error: 'exchangeId inválido' });
+      return res.status(400).json({ error: 'exchangeId invÃƒÂ¡lido' });
     }
 
-    // Buscar dados do usuário
+    // Buscar dados do usuÃƒÂ¡rio
     const userDoc = await db.collection('users').doc(userId).get();
     if (!userDoc.exists) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
+      return res.status(404).json({ error: 'UsuÃƒÂ¡rio nÃƒÂ£o encontrado' });
     }
     const userData = userDoc.data()!;
 
@@ -663,7 +663,7 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
 
     if (!asaasCustomerId) {
       if (!cpfCnpj) {
-        return res.status(400).json({ error: 'CPF é obrigatório para criar cobrança' });
+        return res.status(400).json({ error: 'CPF ÃƒÂ© obrigatÃƒÂ³rio para criar cobranÃƒÂ§a' });
       }
       const customer = await asaasRequest('/customers', 'POST', {
         name: userData.name || 'Cliente WeekSwap',
@@ -682,32 +682,32 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
         return res.status(500).json({ error: 'Erro ao criar cliente no gateway de pagamento' });
       }
     } else if (cpfCnpj && !userData.cpf) {
-      // Cliente já existe no Asaas mas sem CPF — atualizar
+      // Cliente jÃƒÂ¡ existe no Asaas mas sem CPF Ã¢â‚¬â€ atualizar
       await asaasRequest(`/customers/${asaasCustomerId}`, 'POST', { cpfCnpj });
       await db.collection('users').doc(userId).update({ cpf: cpfCnpj });
     }
 
-    // Data de vencimento: amanhã
+    // Data de vencimento: amanhÃƒÂ£
     const dueDate = new Date();
     dueDate.setDate(dueDate.getDate() + 1);
     const dueDateStr = dueDate.toISOString().split('T')[0];
 
-    // Criar cobrança
-    const payment = await asaasRequest('/payments', 'POST', {
+    // Criar cobranÃƒÂ§a
+    const payment: any = await asaasRequest('/payments', 'POST', {
       customer: asaasCustomerId,
       billingType,
-      value: creditAmount, // R$ (1 crédito = R$1)
+      value: creditAmount, // R$ (1 crÃƒÂ©dito = R$1)
       dueDate: dueDateStr,
-      description: `${creditAmount} créditos WeekSwap`,
+      description: `${creditAmount} crÃƒÂ©ditos WeekSwap`,
       externalReference: `${userId}_${Date.now()}`,
     });
 
     if (!payment.id) {
-      console.error('Erro ao criar cobrança Asaas:', JSON.stringify(payment));
-      return res.status(500).json({ error: 'Erro ao criar cobrança', details: payment.errors || payment });
+      console.error('Erro ao criar cobranÃƒÂ§a Asaas:', JSON.stringify(payment));
+      return res.status(500).json({ error: 'Erro ao criar cobranÃƒÂ§a', details: payment.errors || payment });
     }
 
-    // Registrar lote de créditos pendente
+    // Registrar lote de crÃƒÂ©ditos pendente
     await db.collection('credit_batches').add({
       user_id: userId,
       amount: creditAmount,
@@ -758,7 +758,7 @@ app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToke
 app.get('/api/asaas-payment/:paymentId', async (req, res) => {
   try {
     const { paymentId } = req.params;
-    const payment = await asaasRequest(`/payments/${paymentId}`, 'GET');
+    const payment: any = await asaasRequest(`/payments/${paymentId}`, 'GET');
     res.json({ status: payment.status, value: payment.value });
   } catch (error) {
     console.error('Erro ao verificar pagamento:', error);
@@ -766,7 +766,7 @@ app.get('/api/asaas-payment/:paymentId', async (req, res) => {
   }
 });
 
-// Registrar indicação quando novo usuário se cadastra
+// Registrar indicaÃƒÂ§ÃƒÂ£o quando novo usuÃƒÂ¡rio se cadastra
 app.post('/api/register-referral', express.json(), async (req, res) => {
   try {
     const { newUserId, referralCode } = req.body;
@@ -778,7 +778,7 @@ app.post('/api/register-referral', express.json(), async (req, res) => {
       .limit(1)
       .get();
 
-    if (referrerQuery.empty) return res.json({ success: false, error: 'Código inválido' });
+    if (referrerQuery.empty) return res.json({ success: false, error: 'CÃƒÂ³digo invÃƒÂ¡lido' });
 
     await referrerQuery.docs[0].ref.update({
       referral_count: admin.firestore.FieldValue.increment(1),
@@ -786,12 +786,12 @@ app.post('/api/register-referral', express.json(), async (req, res) => {
 
     res.json({ success: true });
   } catch (error) {
-    console.error('Erro ao registrar indicação:', error);
-    res.status(500).json({ error: 'Erro ao registrar indicação' });
+    console.error('Erro ao registrar indicaÃƒÂ§ÃƒÂ£o:', error);
+    res.status(500).json({ error: 'Erro ao registrar indicaÃƒÂ§ÃƒÂ£o' });
   }
 });
 
-// Buscar semanas disponíveis
+// Buscar semanas disponÃƒÂ­veis
 app.get('/api/weeks', async (req, res) => {
   try {
     const snapshot = await db
@@ -812,7 +812,7 @@ app.get('/api/weeks', async (req, res) => {
   }
 });
 
-// Buscar trocas do usuário
+// Buscar trocas do usuÃƒÂ¡rio
 app.get('/api/exchanges/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
@@ -822,7 +822,7 @@ app.get('/api/exchanges/:userId', async (req, res) => {
       db.collection('exchanges').where('owner_id', '==', userId).limit(100).get(),
     ]);
 
-    // Remover duplicatas (troca onde user é ao mesmo tempo requester e owner não deve existir,
+    // Remover duplicatas (troca onde user ÃƒÂ© ao mesmo tempo requester e owner nÃƒÂ£o deve existir,
     // mas previne duplicar caso haja overlap)
     const seen = new Set<string>();
     const exchanges: any[] = [];
@@ -837,7 +837,7 @@ app.get('/api/exchanges/:userId', async (req, res) => {
       }
     });
 
-    // Ordenar por data de criação descendente (mais recentes primeiro)
+    // Ordenar por data de criaÃƒÂ§ÃƒÂ£o descendente (mais recentes primeiro)
     exchanges.sort((a, b) => {
       const aTime = a.created_at?._seconds || 0;
       const bTime = b.created_at?._seconds || 0;
@@ -851,14 +851,14 @@ app.get('/api/exchanges/:userId', async (req, res) => {
   }
 });
 
-// Buscar perfil do usuário
+// Buscar perfil do usuÃƒÂ¡rio
 app.get('/api/user/:userId', async (req, res) => {
   try {
     const { userId } = req.params;
     const userDoc = await db.collection('users').doc(userId).get();
 
     if (!userDoc.exists) {
-      return res.status(404).json({ error: 'Usuário não encontrado' });
+      return res.status(404).json({ error: 'UsuÃƒÂ¡rio nÃƒÂ£o encontrado' });
     }
 
     const data = userDoc.data()!;
@@ -871,12 +871,12 @@ app.get('/api/user/:userId', async (req, res) => {
       account_status: data.account_status || 'active',
     });
   } catch (error) {
-    console.error('Erro ao buscar usuário:', error);
-    res.status(500).json({ error: 'Erro ao buscar usuário' });
+    console.error('Erro ao buscar usuÃƒÂ¡rio:', error);
+    res.status(500).json({ error: 'Erro ao buscar usuÃƒÂ¡rio' });
   }
 });
 
-// ─── Handlers do Webhook ────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Handlers do Webhook Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const userId = session.metadata?.userId;
@@ -884,16 +884,16 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
   const exchangeId = session.metadata?.exchangeId;
 
   if (!userId || !creditAmount) {
-    console.error('Metadata inválida no checkout:', session.metadata);
+    console.error('Metadata invÃƒÂ¡lida no checkout:', session.metadata);
     return;
   }
 
-  // Para cartão Stripe, payment_status === 'paid' significa pagamento confirmado imediatamente
+  // Para cartÃƒÂ£o Stripe, payment_status === 'paid' significa pagamento confirmado imediatamente
   const isPaid = session.payment_status === 'paid';
 
   const batch = db.batch();
 
-  // Criar registro do lote de créditos
+  // Criar registro do lote de crÃƒÂ©ditos
   const creditBatchRef = db.collection('credit_batches').doc();
   batch.set(creditBatchRef, {
     user_id: userId,
@@ -907,7 +907,7 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
 
   const userRef = db.collection('users').doc(userId);
   if (isPaid) {
-    // Pagamento confirmado: creditar saldo disponível
+    // Pagamento confirmado: creditar saldo disponÃƒÂ­vel
     batch.update(userRef, {
       credits_balance: admin.firestore.FieldValue.increment(creditAmount),
     });
@@ -939,13 +939,13 @@ async function handleCheckoutCompleted(session: Stripe.Checkout.Session) {
     credit_amount: creditAmount,
     exchange_id: exchangeId || null,
   });
-  console.log(`Checkout Stripe: ${creditAmount} créditos para ${userId} (${isPaid ? 'DISPONÍVEIS' : 'PENDENTES'})`);
+  console.log(`Checkout Stripe: ${creditAmount} crÃƒÂ©ditos para ${userId} (${isPaid ? 'DISPONÃƒÂVEIS' : 'PENDENTES'})`);
 }
 
 async function handleDisputeCreated(dispute: Stripe.Dispute) {
   const paymentIntent = dispute.payment_intent as string;
 
-  // Localizar o lote de créditos pelo payment intent
+  // Localizar o lote de crÃƒÂ©ditos pelo payment intent
   const batchQuery = await db
     .collection('credit_batches')
     .where('stripe_payment_intent', '==', paymentIntent)
@@ -953,7 +953,7 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
     .get();
 
   if (batchQuery.empty) {
-    console.error('Lote de créditos não encontrado para dispute:', paymentIntent);
+    console.error('Lote de crÃƒÂ©ditos nÃƒÂ£o encontrado para dispute:', paymentIntent);
     return;
   }
 
@@ -971,7 +971,7 @@ async function handleDisputeCreated(dispute: Stripe.Dispute) {
     dispute_id: dispute.id,
   };
 
-  // Reverter créditos com base no status do lote
+  // Reverter crÃƒÂ©ditos com base no status do lote
   if (batchData.status === 'AVAILABLE') {
     updateData.credits_balance = admin.firestore.FieldValue.increment(-amount);
   } else if (batchData.status === 'PENDING_CLEARANCE') {
@@ -1010,7 +1010,7 @@ async function handleDisputeClosed(dispute: Stripe.Dispute) {
   const batchData = batchDoc.data();
 
   if (dispute.status === 'won') {
-    // Plataforma ganhou a disputa - restaurar créditos
+    // Plataforma ganhou a disputa - restaurar crÃƒÂ©ditos
     const userRef = db.collection('users').doc(batchData.user_id);
     await userRef.update({
       credits_balance: admin.firestore.FieldValue.increment(batchData.amount),
@@ -1025,11 +1025,11 @@ async function handleDisputeClosed(dispute: Stripe.Dispute) {
       dispute_id: dispute.id,
       amount_restored: batchData.amount,
     });
-    console.log(`Disputa vencida: créditos restaurados para ${batchData.user_id}`);
+    console.log(`Disputa vencida: crÃƒÂ©ditos restaurados para ${batchData.user_id}`);
   }
 }
 
-// ─── Audit Log ──────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Audit Log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 async function logAudit(action: string, userId: string, data: Record<string, any>) {
   try {
@@ -1044,7 +1044,7 @@ async function logAudit(action: string, userId: string, data: Record<string, any
   }
 }
 
-// ─── Utilitários ────────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ UtilitÃƒÂ¡rios Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 function getReferralRate(referralCount: number): number {
   if (referralCount >= 51) return 0.025;
@@ -1082,9 +1082,9 @@ async function distributeReferralBonus(userId: string, tradeAmount: number) {
       referral_credits: admin.firestore.FieldValue.increment(bonus),
     });
 
-    console.log(`Bônus de indicação: ${bonus} créditos para ${referrerDoc.id}`);
+    console.log(`BÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o: ${bonus} crÃƒÂ©ditos para ${referrerDoc.id}`);
   } catch (error) {
-    console.error('Erro ao distribuir bônus de indicação:', error);
+    console.error('Erro ao distribuir bÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o:', error);
   }
 }
 
@@ -1100,7 +1100,7 @@ async function updateGlobalStats(commissionAmount: number, exchangeCount: number
   );
 }
 
-// ─── Inicialização ──────────────────────────────────────────────
+// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ InicializaÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 app.listen(PORT, () => {
   console.log(`WeekSwap server running on port ${PORT}`);
 });
