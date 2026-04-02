@@ -3,3 +3,9 @@ dist
 .env
 .env.local
 *.log
+android.keystore
+*.apk
+*.aab
+.firebase
+.gradle
+build
