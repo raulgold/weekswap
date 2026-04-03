@@ -1,10 +1,12 @@
-[{
-  "relation": ["delegate_permission/common.handle_all_urls"],
-  "target": {
-    "namespace": "android_app",
-    "package_name": "com.weekswap.app",
-    "sha256_cert_fingerprints": [
-      "PLACEHOLDER_SUBSTITUIR_DEPOIS_DO_KEYSTORE"
-    ]
+[
+  {
+    "relation": ["delegate_permission/common.handle_all_urls"],
+    "target": {
+      "namespace": "android_app",
+      "package_name": "com.weekswap.app",
+      "sha256_cert_fingerprints": [
+        "FE:E2:EA:D8:0C:3A:6F:74:B8:6F:CA:4E:93:C3:51:26:FB:82:B0:B0:DF:4C:03:A1:B5:F9:FA:73:09:4D:C8:C4"
+      ]
+    }
   }
-}]
+]

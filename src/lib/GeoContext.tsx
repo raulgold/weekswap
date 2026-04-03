@@ -56,16 +56,17 @@ export function GeoProvider({ children }: { children: ReactNode }) {
         setLoading(false);
         localStorage.setItem('ws_country', detected);
       },
-      (_err) => {
-        if (saved) {
-          setCountry(saved);
-          setLoading(false);
-        } else {
+      (err) => {
+        // Verificar se foi negado permissão
+        if (err.code === 1) { // PERMISSION_DENIED
           setPermissionDenied(true);
-          setLoading(false);
         }
+        // Em caso de falha (timeout, recusa, erro de GPS), usar valor salvo ou BR como padrão.
+        // Nunca bloquear o app — a detecção de localização é apenas para taxa de câmbio.
+        setCountry(saved ?? 'BR');
+        setLoading(false);
       },
-      { timeout: 12000, enableHighAccuracy: false, maximumAge: 3600000 }
+      { timeout: 15000, enableHighAccuracy: false, maximumAge: 3600000 }
     );
   }, []);
 

@@ -3,9 +3,10 @@ import { motion, AnimatePresence } from 'framer-motion';
 import {
   ArrowLeftRight, Check, X, Clock, AlertCircle,
   ChevronDown, ChevronUp, FileText, QrCode, CreditCard,
-  ExternalLink, Copy, Smartphone, DollarSign
+  ExternalLink, Copy, Smartphone, DollarSign, Star
 } from 'lucide-react';
 import { api } from '../lib/api';
+import { auth } from '../lib/firebase';
 import { useGeo } from '../lib/GeoContext';
 
 interface ExchangesPageProps {
@@ -19,6 +20,106 @@ const STATUS_CONFIG: Record<string, { label: string; color: string; icon: any }>
   FINALIZED:         { label: 'Finalizada',             color: 'bg-emerald-100 text-emerald-700', icon: Check },
   cancelled:         { label: 'Cancelada',              color: 'bg-red-100 text-red-700',         icon: X },
 };
+
+
+// Componente ReviewButton — reutilizável para cada troca finalizada
+function ReviewButton({ exchangeId, userId }: { exchangeId: string; userId: string }) {
+  const [showForm, setShowForm] = useState(false);
+  const [rating, setRating] = useState(0);
+  const [comment, setComment] = useState('');
+  const [submitted, setSubmitted] = useState(false);
+  const [submitting, setSubmitting] = useState(false);
+  const [hoverRating, setHoverRating] = useState(0);
+
+  const handleSubmit = async () => {
+    if (rating === 0) return alert('Selecione uma nota de 1 a 5 estrelas');
+    setSubmitting(true);
+    try {
+      const token = await auth.currentUser?.getIdToken();
+      const res = await fetch(`${import.meta.env.VITE_API_URL}/api/submit-review`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+        body: JSON.stringify({ exchangeId, rating, comment }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        setSubmitted(true);
+        setShowForm(false);
+      } else {
+        alert(data.error || 'Erro ao enviar avaliação');
+      }
+    } catch {
+      alert('Erro ao enviar avaliação');
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  if (submitted) {
+    return (
+      <div className="flex items-center gap-2 text-green-600 text-sm font-medium mt-2">
+        <span>✅ Avaliação enviada!</span>
+      </div>
+    );
+  }
+
+  return (
+    <div className="mt-3">
+      {!showForm ? (
+        <button
+          onClick={() => setShowForm(true)}
+          className="text-sm bg-yellow-50 hover:bg-yellow-100 text-yellow-700 border border-yellow-200 px-4 py-2 rounded-xl font-medium transition-colors"
+        >
+          ⭐ Avaliar esta troca
+        </button>
+      ) : (
+        <div className="bg-gray-50 rounded-xl p-4 mt-2 border border-gray-200">
+          <p className="text-sm font-semibold text-gray-700 mb-2">Como foi sua experiência?</p>
+          {/* Estrelas interativas */}
+          <div className="flex gap-1 mb-3">
+            {[1,2,3,4,5].map(s => (
+              <button
+                key={s}
+                onClick={() => setRating(s)}
+                onMouseEnter={() => setHoverRating(s)}
+                onMouseLeave={() => setHoverRating(0)}
+                className="text-2xl transition-transform hover:scale-110"
+              >
+                <span className={(hoverRating || rating) >= s ? 'text-yellow-400' : 'text-gray-300'}>★</span>
+              </button>
+            ))}
+            {rating > 0 && <span className="text-sm text-gray-500 ml-2 self-center">{['','Péssimo','Ruim','Regular','Bom','Excelente'][rating]}</span>}
+          </div>
+          {/* Comentário */}
+          <textarea
+            value={comment}
+            onChange={e => setComment(e.target.value)}
+            placeholder="Comentário opcional (máx. 500 caracteres)..."
+            maxLength={500}
+            rows={2}
+            className="w-full text-sm border border-gray-200 rounded-xl p-2 resize-none focus:outline-none focus:ring-2 focus:ring-indigo-400 mb-3"
+          />
+          <div className="flex gap-2">
+            <button
+              onClick={handleSubmit}
+              disabled={submitting || rating === 0}
+              className="bg-indigo-600 hover:bg-indigo-700 disabled:opacity-50 text-white text-sm font-bold px-4 py-2 rounded-xl transition-colors"
+            >
+              {submitting ? 'Enviando...' : 'Enviar avaliação'}
+            </button>
+            <button
+              onClick={() => setShowForm(false)}
+              className="text-gray-500 hover:text-gray-700 text-sm px-3 py-2"
+            >
+              Cancelar
+            </button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 export function ExchangesPage({ userId }: ExchangesPageProps) {
   const { country, EXCHANGE_FEE_REAIS, EXCHANGE_FEE_LABEL } = useGeo();
@@ -363,6 +464,11 @@ export function ExchangesPage({ userId }: ExchangesPageProps) {
                                 </button>
                               )}
                             </div>
+                          )}
+
+                          {/* Avaliar troca */}
+                          {exchange.exchange_status === 'FINALIZED' && (
+                            <ReviewButton exchangeId={exchange.id} userId={userId} />
                           )}
 
                           {/* Ver comprovante */}

@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { BrowserRouter, Routes, Route, Navigate } from 'react-router-dom';
+import { BrowserRouter, Routes, Route, Navigate, Link } from 'react-router-dom';
 import { doc, onSnapshot } from 'firebase/firestore';
 import { motion, AnimatePresence } from 'framer-motion';
 import { ShieldAlert, LogOut, MapPin, RefreshCw } from 'lucide-react';
@@ -14,6 +14,8 @@ import { ExchangesPage } from './pages/ExchangesPage';
 import { ReferralPage } from './pages/ReferralPage';
 import { TermsPage } from './pages/TermsPage';
 import { PrivacyPage } from './pages/PrivacyPage';
+import AdminPage from './pages/AdminPage';
+import ProfilePage from './pages/ProfilePage';
 import { Navbar } from './components/Navbar';
 
 // ─── GeoGate: bloqueia app enquanto carrega ou se permissão negada ────────────
@@ -60,13 +62,21 @@ function GeoGate({ children }: { children: React.ReactNode }) {
 function AppContent() {
   const { user, loading, logout } = useAuth();
   const [accountStatus, setAccountStatus] = useState<string>('active');
+  const [isAdmin, setIsAdmin] = useState(false);
 
   useEffect(() => {
-    if (!user) { setAccountStatus('active'); return; }
+    if (!user) {
+      setAccountStatus('active');
+      setIsAdmin(false);
+      return;
+    }
     const unsubscribe = onSnapshot(
       doc(db, 'users', user.uid),
       (snapshot) => {
-        if (snapshot.exists()) setAccountStatus(snapshot.data().account_status || 'active');
+        if (snapshot.exists()) {
+          setAccountStatus(snapshot.data().account_status || 'active');
+          setIsAdmin(snapshot.data().is_admin === true);
+        }
       },
       (error) => console.error('Erro ao monitorar status:', error)
     );
@@ -125,22 +135,39 @@ function AppContent() {
         </Routes>
       ) : (
         <>
-          <Navbar user={user} onLogout={handleLogout} />
+          <Navbar user={user} onLogout={handleLogout} isAdmin={isAdmin} />
           <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
             <Routes>
               <Route path="/" element={<Dashboard userId={user.uid} />} />
               <Route path="/weeks" element={<WeeksPage userId={user.uid} />} />
               <Route path="/exchanges" element={<ExchangesPage userId={user.uid} />} />
               <Route path="/indicacao" element={<ReferralPage userId={user.uid} />} />
+              <Route path="/profile" element={<ProfilePage userId={user.uid} />} />
+              <Route path="/admin" element={<AdminPage />} />
               <Route path="/success" element={
-                <div className="text-center py-20">
-                  <h1 className="text-3xl font-bold text-green-600">Pagamento realizado com sucesso!</h1>
-                  <p className="text-gray-500 mt-2">Seus pontos serao liberados em breve.</p>
-                </div>} />
+                <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+                  <div className="text-center bg-white/10 backdrop-blur-sm rounded-2xl p-8 max-w-sm w-full">
+                    <div className="text-5xl mb-4">✅</div>
+                    <h1 className="text-2xl font-bold text-white mb-2">Pagamento Realizado!</h1>
+                    <p className="text-slate-300 mb-6">Seus pontos serão liberados após a confirmação do pagamento.</p>
+                    <Link to="/" className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition-colors">
+                      Voltar ao Dashboard
+                    </Link>
+                  </div>
+                </div>
+              } />
               <Route path="/cancel" element={
-                <div className="text-center py-20">
-                  <h1 className="text-3xl font-bold text-red-600">Pagamento cancelado</h1>
-                </div>} />
+                <div className="flex flex-col items-center justify-center min-h-screen bg-gradient-to-br from-slate-900 to-slate-800 p-4">
+                  <div className="text-center bg-white/10 backdrop-blur-sm rounded-2xl p-8 max-w-sm w-full">
+                    <div className="text-5xl mb-4">❌</div>
+                    <h1 className="text-2xl font-bold text-white mb-2">Pagamento Cancelado</h1>
+                    <p className="text-slate-300 mb-6">O pagamento foi cancelado. Você pode tentar novamente quando quiser.</p>
+                    <Link to="/" className="inline-block bg-indigo-600 hover:bg-indigo-700 text-white font-bold px-6 py-3 rounded-xl transition-colors">
+                      Voltar ao Dashboard
+                    </Link>
+                  </div>
+                </div>
+              } />
               <Route path="/termos" element={<TermsPage />} />
               <Route path="/privacidade" element={<PrivacyPage />} />
               <Route path="*" element={<Navigate to="/" replace />} />

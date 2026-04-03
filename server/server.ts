@@ -1,22 +1,34 @@
 import express from 'express';
 import cors from 'cors';
-import { createRequire } from 'module';
 import { readFileSync } from 'fs';
 import { config } from 'dotenv';
 import rateLimit from 'express-rate-limit';
+import admin from 'firebase-admin';
+import { authMiddleware } from './middleware/auth.js';
+import { createRiskLockMiddleware } from './middleware/riskLock.js';
+import { createAdminMiddleware } from './middleware/admin.js';
+import { createAsaasRequest } from './services/asaas.js';
+import {
+  calcularPontosSemana,
+  labelPontosSemana,
+  POINTS_PER_REAL,
+  GOLD_MODE_DAYS,
+  GOLD_MODE_PRICE,
+} from './services/points.js';
+import { logAudit } from './services/audit.js';
+import { distributeReferralBonus } from './services/referral.js';
+import { updateGlobalStats } from './services/stats.js';
+import { createAdminRouter } from './routes/adminRoutes.js';
+import { createUserRouter } from './routes/userRoutes.js';
+import { createReviewRouter } from './routes/reviewRoutes.js';
 
 // Carregar variÃƒÂ¡veis de ambiente
 config();
 
-const require = createRequire(import.meta.url);
-const admin = require('firebase-admin');
-
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ ConfiguraÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 const app = express();
 const PORT = process.env.PORT || 3001;
-const POINTS_PER_REAL = 100;  // R$1 = 100 pontos (estilo RCI)
-const GOLD_MODE_PRICE = 200;  // R$200 para Modo Ouro
-const GOLD_MODE_DAYS = 30;    // Modo Ouro valido por 30 dias
+// Constantes em services/points
 
 // Firebase Admin
 admin.initializeApp({
@@ -29,90 +41,12 @@ admin.initializeApp({
 const db = admin.firestore();
 
 
-// Asaas
-const ASAAS_API_KEY = process.env.ASAAS_API_KEY!;
-const ASAAS_API_URL = process.env.ASAAS_API_URL || 'https://api.asaas.com/v3';
 const ASAAS_WEBHOOK_TOKEN = process.env.ASAAS_WEBHOOK_TOKEN || '';
-
-async function asaasRequest(path: string, method: string, body?: any): Promise<any> {
-  const res = await fetch(`${ASAAS_API_URL}${path}`, {
-    method,
-    headers: {
-      'accept': 'application/json',
-      'content-type': 'application/json',
-      'access_token': ASAAS_API_KEY,
-    },
-    body: body ? JSON.stringify(body) : undefined,
-  });
-  return res.json();
-}
+const asaasRequest = createAsaasRequest();
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Rate Limiting Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-//  Engine de Valoracao de Semanas em Pontos 
-// Fatores: temporada, tipo unidade, capacidade, estado, estrelas, avaliacao,
-//          duracao, docs_verified
-function calcularPontosSemana(data: {
-  temporada: string;
-  tipo_unidade: string;
-  capacidade: string | number;
-  estado: string;
-  estrelas: number;
-  avaliacao: number;
-  check_in: string;
-  check_out: string;
-  docs_verified?: boolean;
-}): number {
-  // 1. Base por temporada
-  const t = (data.temporada || '').toLowerCase().replace(/\s+/g, '');
-  const base = t.startsWith('alt') ? 150000 : t.startsWith('bai') ? 60000 : 100000;
-
-  // 2. Multiplicador tipo de unidade
-  const tipo = (data.tipo_unidade || '').toLowerCase();
-  let tipoMult = 1.0;
-  if (/studio|flat|kitnet/.test(tipo)) tipoMult = 0.85;
-  else if (/3\s*q|tres|tr[ei]s/.test(tipo)) tipoMult = 1.50;
-  else if (/2\s*q|dois|duas/.test(tipo)) tipoMult = 1.25;
-
-  // 3. Multiplicador capacidade (numero de pessoas)
-  const cap = Number(data.capacidade) || 2;
-  const capMult = cap >= 8 ? 1.35 : cap >= 6 ? 1.20 : cap >= 4 ? 1.10 : 1.0;
-
-  // 4. Multiplicador estado (localizacao premium no Brasil)
-  const estadoMults: Record<string, number> = {
-    SC: 1.30, RJ: 1.30, PE: 1.25, BA: 1.20, CE: 1.15, SP: 1.10, ES: 1.05,
-  };
-  const estadoMult = estadoMults[(data.estado || '').toUpperCase().trim()] || 1.0;
-
-  // 5. Multiplicador estrelas (1 a 5)
-  const estrelas = Math.min(5, Math.max(1, Math.round(Number(data.estrelas) || 3)));
-  const estrelasMults: Record<number, number> = { 5: 1.40, 4: 1.20, 3: 1.0, 2: 0.80, 1: 0.60 };
-  const estrelasMult = estrelasMults[estrelas] ?? 1.0;
-
-  // 6. Multiplicador avaliacao (0 a 5 estrelas de usuarios)
-  const av = Math.min(5, Math.max(0, Number(data.avaliacao) || 3));
-  const avaliacaoMult = av >= 4.5 ? 1.20 : av >= 4.0 ? 1.10 : av >= 3.0 ? 1.00 : av >= 2.0 ? 0.90 : 0.80;
-
-  // 7. Multiplicador duracao (dias entre check-in e check-out)
-  const dias = Math.max(1, Math.round(
-    (new Date(data.check_out).getTime() - new Date(data.check_in).getTime()) / 86400000
-  ));
-  const duracaoMult = dias >= 14 ? 1.30 : dias >= 7 ? 1.00 : dias >= 5 ? 0.90 : 0.70;
-
-  // 8. Bonus por documentos verificados pelo admin
-  const docsMult = data.docs_verified ? 1.10 : 1.0;
-
-  const raw = base * tipoMult * capMult * estadoMult * estrelasMult * avaliacaoMult * duracaoMult * docsMult;
-  return Math.round(raw / 1000) * 1000; // arredondado ao milhar mais proximo
-}
-
-function labelPontosSemana(pontos: number): string {
-  if (pontos >= 200000) return 'Premium';
-  if (pontos >= 140000) return 'Luxo';
-  if (pontos >= 100000) return 'Superior';
-  if (pontos >= 70000)  return 'Standard';
-  return 'Economica';
-}
+// Engine de pontuação em services/points
 
 // Taxa fixa de finalizacao por pais (cobrada em dinheiro via Asaas, NAO em pontos)
 // Brasil: R$100 | Internacional: USD 50 = ~R$255 (USD_TO_BRL = 5.10)
@@ -141,66 +75,18 @@ const paymentLimiter = rateLimit({
 app.use(cors({ origin: process.env.CLIENT_URL || 'http://localhost:5173' }));
 app.use('/api', generalLimiter);
 
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Middleware de VerificaÃƒÂ§ÃƒÂ£o Firebase Auth Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-const verifyToken = async (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) => {
-  const authHeader = req.headers['authorization'];
-  if (!authHeader?.startsWith('Bearer ')) {
-    // Fallback: accept userId from body (legacy, less secure)
-    return next();
-  }
-  try {
-    const token = authHeader.slice(7);
-    const decoded = await admin.auth().verifyIdToken(token);
-    // Override userId in body with verified UID
-    req.body._verifiedUid = decoded.uid;
-    next();
-  } catch {
-    return res.status(401).json({ error: 'Token invÃƒÂ¡lido ou expirado' });
-  }
-};
+// Protege a API inteira com Firebase Auth (exceto rotas registradas antes deste middleware)
+app.use('/api', authMiddleware);
 
-// Helper to get authenticated userId (verified token > body fallback)
-function getAuthUserId(req: express.Request): string | null {
-  return req.body._verifiedUid || req.body.userId || null;
-}
-
-// Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Middleware de Bloqueio por Risco Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
-const checkRiskLocked = async (
-  req: express.Request,
-  res: express.Response,
-  next: express.NextFunction
-) => {
-  const userId = getAuthUserId(req);
-  if (!userId) {
-    return res.status(400).json({ error: 'userId ÃƒÂ© obrigatÃƒÂ³rio' });
-  }
-  req.body.userId = userId; // ensure body.userId is always the verified one
-
-  try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (userDoc.exists && userDoc.data()?.account_status === 'RISK_LOCKED') {
-      return res.status(403).json({
-        error: 'ACCOUNT_LOCKED',
-        message: 'Sua conta estÃƒÂ¡ bloqueada por motivos de seguranÃƒÂ§a. Entre em contato com o suporte.',
-      });
-    }
-    next();
-  } catch (error) {
-    console.error('Erro ao verificar status de risco:', error);
-    res.status(500).json({ error: 'Erro interno ao verificar conta' });
-  }
-};
+const checkRiskLocked = createRiskLockMiddleware(db);
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Rotas da API Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 // Submeter semana para troca
-app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/submit-week', express.json(), checkRiskLocked, async (req, res) => {
   try {
-    const { userId, weekData } = req.body;
+    const userId = (req as any).user.uid;
+    const { weekData } = req.body;
 
     if (!weekData?.resort || !weekData?.checkIn || !weekData?.checkOut) {
       return res.status(400).json({ error: 'Dados da semana incompletos' });
@@ -222,18 +108,34 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
       return res.status(400).json({ error: 'Check-in nÃƒÂ£o pode ser no passado' });
     }
 
-    // Prevenir semanas duplicadas
+    // Prevenir semanas duplicadas por resort + datas
     const duplicate = await db.collection('weeks')
       .where('owner_id', '==', userId)
       .where('resort', '==', weekData.resort)
       .where('check_in', '==', weekData.checkIn)
       .where('check_out', '==', weekData.checkOut)
-      .where('status', '==', 'available')
+      .where('status', 'in', ['available', 'pending_exchange'])
       .limit(1)
       .get();
 
     if (!duplicate.empty) {
-      return res.status(400).json({ error: 'VocÃƒÂª jÃƒÂ¡ publicou essa semana (mesmo resort e datas)' });
+      return res.status(400).json({ error: '⚠️ Você já tem essa semana cadastrada! Veja em "Minhas Semanas".' });
+    }
+
+    // Verificação por número de certificado (evita duplicata de cota)
+    const numeroCertificado = weekData.numeroCertificado?.trim();
+    if (numeroCertificado) {
+      const certDupQ = await db.collection('weeks')
+        .where('owner_id', '==', userId)
+        .where('numero_certificado', '==', numeroCertificado)
+        .where('status', 'in', ['available', 'pending_exchange'])
+        .limit(1)
+        .get();
+      if (!certDupQ.empty) {
+        return res.status(400).json({
+          error: 'Você já possui uma semana ativa com este número de certificado. Cancele ou remova a semana anterior antes de publicar novamente.'
+        });
+      }
     }
 
     const contractPdfUrl = weekData.contractPdfUrl || null;
@@ -291,9 +193,10 @@ app.post('/api/submit-week', express.json(), verifyToken, checkRiskLocked, async
 });
 
 // Iniciar troca (gratuito - taxa de R$100 cobrada apenas na finalizacao)
-app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/initiate-exchange', express.json(), checkRiskLocked, async (req, res) => {
   try {
-    const { userId, offeredWeekId, requestedWeekId } = req.body;
+    const userId = (req as any).user.uid;
+    const { offeredWeekId, requestedWeekId } = req.body;
 
     if (!offeredWeekId || !requestedWeekId) {
       return res.status(400).json({ error: 'IDs das semanas sao obrigatorios' });
@@ -364,6 +267,10 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
             { statusCode: 400, differential, creditsBalance, faltam }
           );
         }
+        // DEBITAR os pontos do diferencial imediatamente
+        transaction.update(requesterRef, {
+          credits_balance: admin.firestore.FieldValue.increment(-differential),
+        });
       }
 
       // Marcar semana solicitada como em negociacao
@@ -380,7 +287,7 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
         owner_points: ownerPts,
         exchange_fee_brl_reais: EXCHANGE_FEE_BRL_REAIS,
         exchange_fee_int_reais: EXCHANGE_FEE_INT_REAIS,
-        exchange_status: 'pending',
+        exchange_status: 'PENDING',
         exchange_locked: false,
         created_at: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -407,9 +314,10 @@ app.post('/api/initiate-exchange', express.json(), verifyToken, checkRiskLocked,
 });
 
 // Confirmar troca (owner aceita a proposta - sem custo)
-app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/confirm-exchange', express.json(), checkRiskLocked, async (req, res) => {
   try {
-    const { userId, exchangeId } = req.body;
+    const userId = (req as any).user.uid;
+    const { exchangeId } = req.body;
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
     const exchangeDoc = await exchangeRef.get();
 
@@ -417,10 +325,10 @@ app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, 
     const data = exchangeDoc.data()!;
 
     if (data.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode confirmar' });
-    if (data.exchange_status !== 'pending') return res.status(400).json({ error: 'Troca nao esta pendente' });
+    if (data.exchange_status !== 'PENDING') return res.status(400).json({ error: 'Troca nao esta pendente' });
 
     await exchangeRef.update({
-      exchange_status: 'confirmed',
+      exchange_status: 'CONFIRMED',
       confirmed_at: admin.firestore.FieldValue.serverTimestamp(),
     });
 
@@ -432,10 +340,9 @@ app.post('/api/confirm-exchange', express.json(), verifyToken, checkRiskLocked, 
 });
 
 // Cancelar troca
-app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) => {
+app.post('/api/cancel-exchange', express.json(), async (req, res) => {
   try {
-    const userId = getAuthUserId(req);
-    if (!userId) return res.status(400).json({ error: 'userId ÃƒÂ© obrigatÃƒÂ³rio' });
+    const userId = (req as any).user.uid;
 
     const { exchangeId } = req.body;
     const exchangeRef = db.collection('exchanges').doc(exchangeId);
@@ -447,22 +354,32 @@ app.post('/api/cancel-exchange', express.json(), verifyToken, async (req, res) =
     if (data.owner_id !== userId && data.requester_id !== userId) {
       return res.status(403).json({ error: 'Sem permissÃƒÂ£o para cancelar' });
     }
-    if (['FINALIZED', 'cancelled'].includes(data.exchange_status)) {
+    if (['FINALIZED', 'CANCELLED'].includes(data.exchange_status)) {
       return res.status(400).json({ error: 'Troca nÃƒÂ£o pode ser cancelada neste estado' });
     }
 
     // Restaurar status da semana solicitada para 'available'
+    // Se houve diferencial de pontos debitado, restaurar os pontos ao solicitante
+    const differential = (data.owner_points || 0) - (data.req_points || 0);
+    
     const batch = db.batch();
     batch.update(exchangeRef, {
-      exchange_status: 'cancelled',
+      exchange_status: 'CANCELLED',
       cancelled_at: admin.firestore.FieldValue.serverTimestamp(),
     });
     if (data.requested_week_id) {
       const weekRef = db.collection('weeks').doc(data.requested_week_id);
       batch.update(weekRef, { status: 'available' });
     }
+    // Se diferencial era positivo, restaurar os pontos debitados
+    if (differential > 0) {
+      const requesterRef = db.collection('users').doc(data.requester_id);
+      batch.update(requesterRef, {
+        credits_balance: admin.firestore.FieldValue.increment(differential),
+      });
+    }
     await batch.commit();
-    await logAudit('EXCHANGE_CANCELLED', userId, {
+    await logAudit(db, 'EXCHANGE_CANCELLED', userId, {
       exchange_id: exchangeId,
       cancelled_by: userId,
       previous_status: data.exchange_status,
@@ -516,9 +433,9 @@ async function finalizarTrocaAposTaxa(
   });
 
   try {
-    await updateGlobalStats(feeReais, 1);
-    await distributeReferralBonus(exData.requester_id, feeReais);
-    await logAudit('EXCHANGE_FINALIZED', ownerId, {
+    await updateGlobalStats(db, feeReais, 1);
+    await distributeReferralBonus(db, exData.requester_id, feeReais);
+    await logAudit(db, 'EXCHANGE_FINALIZED', ownerId, {
       exchange_id: exchangeId,
       fee_reais: feeReais,
       fee_country: country,
@@ -532,9 +449,10 @@ async function finalizarTrocaAposTaxa(
 }
 
 // Criar cobranca Asaas para taxa de finalizacao de troca (sem pontos)
-app.post('/api/create-exchange-fee-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/create-exchange-fee-payment', express.json(), paymentLimiter, checkRiskLocked, async (req, res) => {
   try {
-    const { userId, exchangeId, billingType, cpf, country } = req.body;
+    const userId = (req as any).user.uid;
+    const { exchangeId, billingType, cpf, country } = req.body;
     if (!exchangeId) return res.status(400).json({ error: 'exchangeId obrigatorio' });
 
     const userCountry: string = country === 'INTERNATIONAL' ? 'INTERNATIONAL' : 'BR';
@@ -553,7 +471,7 @@ app.post('/api/create-exchange-fee-payment', express.json(), paymentLimiter, ver
     if (!exchangeDoc.exists) return res.status(404).json({ error: 'Troca nao encontrada' });
     const exData = exchangeDoc.data()!;
     if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono da semana paga a taxa' });
-    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
+    if (exData.exchange_status !== 'CONFIRMED') return res.status(400).json({ error: 'A troca precisa estar confirmada primeiro' });
     if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja finalizada' });
 
     // Verificar se ja existe taxa pendente ou paga
@@ -649,9 +567,10 @@ app.post('/api/create-exchange-fee-payment', express.json(), paymentLimiter, ver
 });
 
 // Finalizar troca (rota legada/admin - apenas verifica se taxa foi paga)
-app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/complete-exchange', express.json(), checkRiskLocked, async (req, res) => {
   try {
-    const { userId, exchangeId } = req.body;
+    const userId = (req as any).user.uid;
+    const { exchangeId } = req.body;
     if (!exchangeId) return res.status(400).json({ error: 'exchangeId obrigatorio' });
 
     const exchangeDoc = await db.collection('exchanges').doc(exchangeId).get();
@@ -660,7 +579,7 @@ app.post('/api/complete-exchange', express.json(), verifyToken, checkRiskLocked,
 
     if (exData.owner_id !== userId) return res.status(403).json({ error: 'Apenas o dono pode finalizar a troca' });
     if (exData.exchange_status === 'FINALIZED') return res.status(400).json({ error: 'Troca ja finalizada' });
-    if (exData.exchange_status !== 'confirmed') return res.status(400).json({ error: 'Troca precisa estar confirmada primeiro' });
+    if (exData.exchange_status !== 'CONFIRMED') return res.status(400).json({ error: 'Troca precisa estar confirmada primeiro' });
 
     // Verificar se a taxa foi paga
     const feeQ = await db.collection('exchange_fee_payments')
@@ -689,17 +608,26 @@ app.get('/api/asaas-webhook', (_req, res) => {
 
 app.post('/api/asaas-webhook', express.json(), async (req, res) => {
   try {
-    // Verificar token de autenticaÃƒÂ§ÃƒÂ£o do webhook (configurado no painel Asaas)
-    if (ASAAS_WEBHOOK_TOKEN) {
-      const incomingToken = req.headers['asaas-access-token'] as string;
-      if (incomingToken !== ASAAS_WEBHOOK_TOKEN) {
-        console.warn('Webhook Asaas: token invÃƒÂ¡lido rejeitado');
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    // ── Validação robusta do token de autenticação do webhook ────────────────
+    const ASAAS_TOKEN = process.env.ASAAS_WEBHOOK_TOKEN;
+    if (!ASAAS_TOKEN) {
+      console.error('CRÍTICO: ASAAS_WEBHOOK_TOKEN não configurado! Webhook rejeitado por segurança.');
+      return res.status(500).json({ error: 'Webhook não configurado corretamente' });
+    }
+    const incomingToken = req.headers['asaas-access-token'] as string;
+    if (!incomingToken || incomingToken !== ASAAS_TOKEN) {
+      console.warn(`Webhook Asaas: token inválido de ${req.ip}. Possível ataque!`);
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
-    const event = req.body;
-    console.log('Asaas webhook:', event.event, event.payment?.id);
+    // ── Validação do payload mínimo necessário ─────────────────────────────
+    const { event, payment } = req.body;
+    if (!event || !payment || !payment.id) {
+      console.warn('Webhook Asaas: payload inválido ou incompleto', req.body);
+      return res.status(400).json({ error: 'Payload inválido' });
+    }
+
+    console.log('Asaas webhook:', event, payment.id);
 
     if (event.event === 'PAYMENT_RECEIVED' || event.event === 'PAYMENT_CONFIRMED') {
       const payment = event.payment;
@@ -793,7 +721,7 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
         }
       });
 
-      await logAudit('PAYMENT_ASAAS_CONFIRMED', batchData.user_id, {
+      await logAudit(db, 'PAYMENT_ASAAS_CONFIRMED', batchData.user_id, {
         asaas_payment_id: payment.id,
         credit_amount: batchData.amount,
         exchange_id: batchData.exchange_id || null,
@@ -830,9 +758,10 @@ app.post('/api/asaas-webhook', express.json(), async (req, res) => {
 });
 
 // Criar cobranÃƒÂ§a Asaas (PIX, boleto ou cartÃƒÂ£o)
-app.post('/api/create-asaas-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/create-asaas-payment', express.json(), paymentLimiter, checkRiskLocked, async (req, res) => {
   try {
-    const { userId, creditAmount, exchangeId, billingType, cpf } = req.body;
+    const userId = (req as any).user.uid;
+    const { creditAmount, exchangeId, billingType, cpf } = req.body;
     // billingType: 'PIX' | 'BOLETO' | 'CREDIT_CARD'
 
     const amount = Number(creditAmount);
@@ -993,9 +922,10 @@ app.post('/api/register-referral', express.json(), async (req, res) => {
 });
 
 // Criar cobranca Modo Ouro (R$200 para destacar semana no topo)
-app.post('/api/create-gold-payment', express.json(), paymentLimiter, verifyToken, checkRiskLocked, async (req, res) => {
+app.post('/api/create-gold-payment', express.json(), paymentLimiter, checkRiskLocked, async (req, res) => {
   try {
-    const { userId, weekId, billingType = 'PIX', cpf } = req.body;
+    const userId = (req as any).user.uid;
+    const { weekId, billingType = 'PIX', cpf } = req.body;
     if (!weekId) return res.status(400).json({ error: 'weekId e obrigatorio' });
 
     const weekDoc = await db.collection('weeks').doc(weekId).get();
@@ -1070,9 +1000,10 @@ app.post('/api/create-gold-payment', express.json(), paymentLimiter, verifyToken
 });
 
 // Ativar Modo Ouro apos confirmacao de pagamento
-app.post('/api/activate-gold-mode', express.json(), verifyToken, async (req, res) => {
+app.post('/api/activate-gold-mode', express.json(), async (req, res) => {
   try {
-    const { userId, weekId, paymentId } = req.body;
+    const userId = (req as any).user.uid;
+    const { weekId, paymentId } = req.body;
     if (!weekId || !paymentId) return res.status(400).json({ error: 'weekId e paymentId sao obrigatorios' });
 
     const payment = await asaasRequest(`/payments/${paymentId}`, 'GET');
@@ -1101,7 +1032,7 @@ app.post('/api/activate-gold-mode', express.json(), verifyToken, async (req, res
     batch.update(gpDoc.ref, { status: 'ACTIVE', activated_at: admin.firestore.FieldValue.serverTimestamp() });
     await batch.commit();
 
-    await logAudit('GOLD_MODE_ACTIVATED', userId, { week_id: weekId, payment_id: paymentId, expires_at: goldExpires });
+    await logAudit(db, 'GOLD_MODE_ACTIVATED', userId, { week_id: weekId, payment_id: paymentId, expires_at: goldExpires });
     res.json({ success: true, goldExpiresAt: goldExpires.toISOString() });
   } catch (error: any) {
     console.error('Erro ao ativar Modo Ouro:', error);
@@ -1153,7 +1084,7 @@ app.get('/api/weeks', async (req, res) => {
 // Buscar trocas do usuÃƒÂ¡rio
 app.get('/api/exchanges/:userId', async (req, res) => {
   try {
-    const { userId } = req.params;
+    const userId = String(req.params.userId);
 
     const [asRequester, asOwner] = await Promise.all([
       db.collection('exchanges').where('requester_id', '==', userId).limit(100).get(),
@@ -1189,115 +1120,30 @@ app.get('/api/exchanges/:userId', async (req, res) => {
   }
 });
 
-// Buscar perfil do usuÃƒÂ¡rio
-app.get('/api/user/:userId', async (req, res) => {
-  try {
-    const { userId } = req.params;
-    const userDoc = await db.collection('users').doc(userId).get();
-
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: 'UsuÃƒÂ¡rio nÃƒÂ£o encontrado' });
-    }
-
-    const data = userDoc.data()!;
-    res.json({
-      uid: userDoc.id,
-      name: data.name,
-      email: data.email,
-      credits_balance: data.credits_balance || 0,
-      pending_credits: data.pending_credits || 0,
-      account_status: data.account_status || 'active',
-    });
-  } catch (error) {
-    console.error('Erro ao buscar usuÃƒÂ¡rio:', error);
-    res.status(500).json({ error: 'Erro ao buscar usuÃƒÂ¡rio' });
-  }
-});
+app.use('/api', createUserRouter(db, checkRiskLocked));
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ Audit Log Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-async function logAudit(action: string, userId: string, data: Record<string, any>) {
-  try {
-    await db.collection('audit_logs').add({
-      action,
-      user_id: userId,
-      ...data,
-      created_at: admin.firestore.FieldValue.serverTimestamp(),
-    });
-  } catch (err) {
-    console.error('Erro ao gravar audit_log:', err);
-  }
-}
+// logAudit em services/audit
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ UtilitÃƒÂ¡rios Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
-function getReferralRate(referralCount: number): number {
-  if (referralCount >= 51) return 0.025;
-  if (referralCount >= 21) return 0.020;
-  if (referralCount >= 6)  return 0.015;
-  return 0.010;
-}
-
-async function distributeReferralBonus(userId: string, tradeAmount: number) {
-  try {
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) return;
-
-    const referredBy = userDoc.data()?.referred_by;
-    if (!referredBy) return;
-
-    // Buscar o indicador pelo referral_code
-    const referrerQuery = await db
-      .collection('users')
-      .where('referral_code', '==', referredBy)
-      .limit(1)
-      .get();
-
-    if (referrerQuery.empty) return;
-
-    const referrerDoc = referrerQuery.docs[0];
-    const referrerData = referrerDoc.data();
-    const referralCount = referrerData.referral_count || 0;
-    const rate = getReferralRate(referralCount);
-    const bonus = Math.floor(tradeAmount * rate);
-
-    if (bonus <= 0) return;
-
-    await referrerDoc.ref.update({
-      referral_credits: admin.firestore.FieldValue.increment(bonus),
-    });
-
-    console.log(`BÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o: ${bonus} crÃƒÂ©ditos para ${referrerDoc.id}`);
-  } catch (error) {
-    console.error('Erro ao distribuir bÃƒÂ´nus de indicaÃƒÂ§ÃƒÂ£o:', error);
-  }
-}
-
-async function updateGlobalStats(commissionAmount: number, exchangeCount: number) {
-  const statsRef = db.collection('platform').doc('stats');
-  await statsRef.set(
-    {
-      total_commission: admin.firestore.FieldValue.increment(commissionAmount),
-      total_exchanges: admin.firestore.FieldValue.increment(exchangeCount),
-      last_updated: admin.firestore.FieldValue.serverTimestamp(),
-    },
-    { merge: true }
-  );
-}
+// referral/stats em services/*
 
 // Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬ InicializaÃƒÂ§ÃƒÂ£o Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬Ã¢â€â‚¬
 
 // Auto-cancelamento de trocas pendentes (chamado pela tarefa agendada)
-// Cancela trocas com status 'pending' ou 'confirmed' criadas ha mais de 48h
+// Cancela trocas com status 'PENDING' ou 'CONFIRMED' criadas ha mais de 48h
 // Rota protegida por token interno (CRON_SECRET no env)
 app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
   try {
     const cronSecret = process.env.CRON_SECRET;
-    if (cronSecret) {
-      const incomingSecret = req.headers['x-cron-secret'] as string;
-      if (incomingSecret !== cronSecret) {
-        return res.status(401).json({ error: 'Unauthorized' });
-      }
+    if (!cronSecret) {
+      return res.status(500).json({ error: 'CRON_SECRET nao configurado no servidor' });
+    }
+    const incomingSecret = req.headers['x-cron-secret'] as string;
+    if (incomingSecret !== cronSecret) {
+      return res.status(401).json({ error: 'Unauthorized' });
     }
 
     const cutoff = new Date();
@@ -1305,7 +1151,7 @@ app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
     const cutoffTs = admin.firestore.Timestamp.fromDate(cutoff);
 
     const staleQuery = await db.collection('exchanges')
-      .where('exchange_status', 'in', ['pending', 'confirmed'])
+      .where('exchange_status', 'in', ['PENDING', 'CONFIRMED'])
       .where('created_at', '<=', cutoffTs)
       .limit(50)
       .get();
@@ -1319,8 +1165,10 @@ app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
 
     for (const doc of staleQuery.docs) {
       const data = doc.data();
+      const differential = (data.owner_points || 0) - (data.req_points || 0);
+      
       batch.update(doc.ref, {
-        exchange_status: 'cancelled',
+        exchange_status: 'CANCELLED',
         cancel_reason: 'timeout_48h',
         cancelled_at: admin.firestore.FieldValue.serverTimestamp(),
       });
@@ -1329,12 +1177,19 @@ app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
         const weekRef = db.collection('weeks').doc(data.requested_week_id);
         batch.update(weekRef, { status: 'available' });
       }
+      // Restaurar pontos se houver diferencial
+      if (differential > 0) {
+        const requesterRef = db.collection('users').doc(data.requester_id);
+        batch.update(requesterRef, {
+          credits_balance: admin.firestore.FieldValue.increment(differential),
+        });
+      }
       cancelled++;
     }
 
     await batch.commit();
 
-    await logAudit('AUTO_CANCEL_STALE_EXCHANGES', 'system', {
+    await logAudit(db, 'AUTO_CANCEL_STALE_EXCHANGES', 'system', {
       cancelled_count: cancelled,
       cutoff_hours: 48,
     });
@@ -1346,6 +1201,14 @@ app.post('/api/cancel-stale-exchanges', express.json(), async (req, res) => {
     res.status(500).json({ error: error.message || 'Erro ao cancelar trocas vencidas' });
   }
 });
+
+
+app.use('/api', createReviewRouter(db));
+
+
+
+const checkAdmin = createAdminMiddleware(db);
+app.use('/api/admin', createAdminRouter(db, checkAdmin));
 
 app.listen(PORT, () => {
   console.log(`WeekSwap server running on port ${PORT}`);

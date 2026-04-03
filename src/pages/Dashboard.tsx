@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
-import { Wallet, Clock, ArrowLeftRight, CreditCard, QrCode, X, Copy, Check, ExternalLink, Smartphone, Star, Zap } from 'lucide-react';
+import { Wallet, Clock, ArrowLeftRight, CreditCard, QrCode, X, Copy, Check, ExternalLink, Smartphone, Star, Zap, CalendarPlus, Gift } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { api } from '../lib/api';
 
 const POINTS_PER_REAL = 100;
@@ -51,6 +52,37 @@ export function Dashboard({ userId }: DashboardProps) {
 
   useEffect(() => { fetchData(); }, [fetchData]);
 
+  // ── Polling automático de status de pagamento enquanto modal está aberto ──
+  useEffect(() => {
+    if (!showPayModal || !payResult?.paymentId) return;
+
+    let attempts = 0;
+    const maxAttempts = 24; // 2 minutos (24 × 5s)
+
+    const interval = setInterval(async () => {
+      attempts++;
+      try {
+        const data = await api.getAsaasPaymentStatus(payResult.paymentId!);
+        if (data.status === 'RECEIVED' || data.status === 'CONFIRMED') {
+          clearInterval(interval);
+          setShowPayModal(false);
+          setPayResult(null);
+          setCopied(false);
+          await fetchData();
+          // Sucesso silencioso — apenas fechar modal e atualizar dados
+        }
+      } catch {
+        // Ignorar erros de polling silenciosamente
+      }
+
+      if (attempts >= maxAttempts) {
+        clearInterval(interval);
+      }
+    }, 5000);
+
+    return () => clearInterval(interval);
+  }, [showPayModal, payResult?.paymentId, fetchData]);
+
   const formatCpf = (value: string) => {
     const digits = value.replace(/\D/g, '').slice(0, 11);
     return digits
@@ -92,9 +124,11 @@ export function Dashboard({ userId }: DashboardProps) {
       const { status } = await api.getAsaasPaymentStatus(payResult.paymentId);
       if (status === 'RECEIVED' || status === 'CONFIRMED') {
         alert('Pagamento confirmado! Seus pontos serão liberados em breve.');
+        // Fechar modal APÓS o usuário confirmar o alert
         setShowPayModal(false);
         setPayResult(null);
-        fetchData();
+        setCopied(false);
+        await fetchData();
       } else {
         alert(`Status: ${status} — aguardando confirmação.`);
       }
@@ -111,6 +145,42 @@ export function Dashboard({ userId }: DashboardProps) {
     setCopied(false);
   };
 
+  const getExchangeStatusIcon = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return '🟡';
+      case 'CONFIRMED':
+        return '🔵';
+      case 'FINALIZED':
+        return '✅';
+      case 'cancelled':
+        return '❌';
+      default:
+        return '⚪';
+    }
+  };
+
+  const getExchangeStatusColor = (status: string) => {
+    switch (status) {
+      case 'pending':
+        return 'bg-amber-100 text-amber-700';
+      case 'CONFIRMED':
+        return 'bg-blue-100 text-blue-700';
+      case 'FINALIZED':
+        return 'bg-green-100 text-green-700';
+      case 'cancelled':
+        return 'bg-red-100 text-red-700';
+      default:
+        return 'bg-gray-100 text-gray-700';
+    }
+  };
+
+  const formatDate = (timestamp: any) => {
+    if (!timestamp) return 'Data desconhecida';
+    const date = timestamp.toDate ? timestamp.toDate() : new Date(timestamp);
+    return date.toLocaleDateString('pt-BR', { year: 'numeric', month: 'long', day: 'numeric' });
+  };
+
   if (loading) {
     return (
       <div className="flex justify-center py-20">
@@ -120,9 +190,30 @@ export function Dashboard({ userId }: DashboardProps) {
   }
 
   const stats = [
-    { label: 'Pontos Disponíveis', value: (userData?.credits_balance || 0).toLocaleString('pt-BR'), icon: Wallet, color: 'text-green-600', bg: 'bg-green-50' },
-    { label: 'Pontos Pendentes',   value: (userData?.pending_credits || 0).toLocaleString('pt-BR'), icon: Clock,   color: 'text-amber-600', bg: 'bg-amber-50' },
-    { label: 'Total de Trocas',    value: exchanges.length,                                          icon: ArrowLeftRight, color: 'text-indigo-600', bg: 'bg-indigo-50' },
+    { 
+      label: 'Pontos Disponíveis', 
+      value: (userData?.credits_balance || 0).toLocaleString('pt-BR'), 
+      reais: ((userData?.credits_balance || 0) / POINTS_PER_REAL).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+      icon: Wallet, 
+      color: 'text-green-600', 
+      bg: 'bg-green-50' 
+    },
+    { 
+      label: 'Pontos Pendentes',   
+      value: (userData?.pending_credits || 0).toLocaleString('pt-BR'),
+      reais: ((userData?.pending_credits || 0) / POINTS_PER_REAL).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' }),
+      icon: Clock,   
+      color: 'text-amber-600', 
+      bg: 'bg-amber-50' 
+    },
+    { 
+      label: 'Total de Trocas',    
+      value: exchanges.length,
+      reais: '',
+      icon: ArrowLeftRight, 
+      color: 'text-indigo-600', 
+      bg: 'bg-indigo-50' 
+    },
   ];
 
   const paymentMethods = [
@@ -135,24 +226,35 @@ export function Dashboard({ userId }: DashboardProps) {
     <div className="space-y-8">
       <h1 className="text-2xl font-bold text-gray-900">Dashboard</h1>
 
-      {/* Banner sistema de pontos */}
-      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-5 text-white flex items-center gap-4">
-        <div className="flex-shrink-0 w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
-          <Zap size={24} className="text-yellow-300" />
+      {/* Banner sistema de pontos - MELHORADO */}
+      <div className="bg-gradient-to-r from-indigo-600 to-purple-600 rounded-2xl p-6 text-white">
+        <div className="flex items-start gap-4 mb-4">
+          <div className="flex-shrink-0 w-12 h-12 bg-white/20 rounded-xl flex items-center justify-center">
+            <Zap size={24} className="text-yellow-300" />
+          </div>
+          <div className="flex-1">
+            <p className="font-black text-lg">Sistema de Pontos WeekSwap</p>
+            <p className="text-indigo-100 text-sm">R$ 1,00 = <strong className="text-white">100 pontos</strong> — igual ao RCI. Acumule e troque suas semanas!</p>
+          </div>
+          <div className="text-right hidden sm:block">
+            <p className="text-3xl font-black text-yellow-300">
+              {((userData?.credits_balance || 0) / POINTS_PER_REAL).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
+            </p>
+            <p className="text-xs text-indigo-200">em valor equivalente</p>
+          </div>
         </div>
-        <div className="flex-1">
-          <p className="font-black text-lg">Sistema de Pontos WeekSwap</p>
-          <p className="text-indigo-100 text-sm">R$ 1,00 = <strong className="text-white">100 pontos</strong> — igual ao RCI. Acumule e troque suas semanas!</p>
-        </div>
-        <div className="text-right hidden sm:block">
-          <p className="text-3xl font-black text-yellow-300">
-            {((userData?.credits_balance || 0) / POINTS_PER_REAL).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' })}
-          </p>
-          <p className="text-xs text-indigo-200">em valor equivalente</p>
+        
+        {/* Fluxo explicativo */}
+        <div className="flex items-center justify-center gap-3 flex-wrap text-xs text-indigo-100 mt-6 pt-6 border-t border-white/20">
+          <span>Deposite sua semana</span>
+          <ArrowLeftRight size={16} className="text-yellow-300" />
+          <span>Escolha um resort</span>
+          <ArrowLeftRight size={16} className="text-yellow-300" />
+          <span>Pague a diferença</span>
         </div>
       </div>
 
-      {/* Stats */}
+      {/* Stats - MELHORADO com valores em R$ */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
         {stats.map((stat, i) => (
           <motion.div
@@ -160,15 +262,38 @@ export function Dashboard({ userId }: DashboardProps) {
             initial={{ opacity: 0, y: 20 }}
             animate={{ opacity: 1, y: 0 }}
             transition={{ delay: i * 0.1 }}
-            className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100"
+            className={`${stat.bg} rounded-2xl p-6 shadow-sm border border-gray-100`}
           >
-            <div className={`inline-flex p-3 rounded-xl ${stat.bg} mb-4`}>
+            <div className={`inline-flex p-3 rounded-xl bg-white mb-4`}>
               <stat.icon size={24} className={stat.color} />
             </div>
             <p className="text-sm text-gray-500">{stat.label}</p>
             <p className="text-3xl font-black text-gray-900">{stat.value}</p>
+            {stat.reais && <p className="text-xs text-gray-500 mt-1">{stat.reais}</p>}
           </motion.div>
         ))}
+      </div>
+
+      {/* Card de Resumo Rápido - NOVO */}
+      <div className="grid grid-cols-3 gap-3">
+        <Link to="/weeks" className="flex flex-col items-center gap-2 bg-white border border-gray-100 rounded-2xl p-4 hover:border-indigo-300 hover:shadow-md transition-all group">
+          <div className="w-10 h-10 rounded-xl bg-indigo-100 flex items-center justify-center group-hover:bg-indigo-600 transition-colors">
+            <CalendarPlus className="text-indigo-600 group-hover:text-white" size={20} />
+          </div>
+          <span className="text-xs font-semibold text-gray-600 text-center">Publicar Semana</span>
+        </Link>
+        <Link to="/weeks" className="flex flex-col items-center gap-2 bg-white border border-gray-100 rounded-2xl p-4 hover:border-purple-300 hover:shadow-md transition-all group">
+          <div className="w-10 h-10 rounded-xl bg-purple-100 flex items-center justify-center group-hover:bg-purple-600 transition-colors">
+            <ArrowLeftRight className="text-purple-600 group-hover:text-white" size={20} />
+          </div>
+          <span className="text-xs font-semibold text-gray-600 text-center">Buscar Troca</span>
+        </Link>
+        <Link to="/indicacao" className="flex flex-col items-center gap-2 bg-white border border-gray-100 rounded-2xl p-4 hover:border-green-300 hover:shadow-md transition-all group">
+          <div className="w-10 h-10 rounded-xl bg-green-100 flex items-center justify-center group-hover:bg-green-600 transition-colors">
+            <Gift className="text-green-600 group-hover:text-white" size={20} />
+          </div>
+          <span className="text-xs font-semibold text-gray-600 text-center">Indicar Amigo</span>
+        </Link>
       </div>
 
       {/* Modo Ouro CTA */}
@@ -231,27 +356,41 @@ export function Dashboard({ userId }: DashboardProps) {
         </div>
       </div>
 
-      {/* Trocas recentes */}
+      {/* Trocas recentes - MELHORADO */}
       <div className="bg-white rounded-2xl p-6 shadow-sm border border-gray-100">
-        <h2 className="text-lg font-bold mb-4">Trocas Recentes</h2>
+        <h2 className="text-lg font-bold mb-4">Histórico de Trocas</h2>
         {exchanges.length === 0 ? (
           <p className="text-gray-400 text-center py-8">Nenhuma troca ainda</p>
         ) : (
           <div className="space-y-3">
             {exchanges.slice(0, 5).map((exchange) => (
-              <div key={exchange.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl">
-                <div>
-                  <p className="font-medium text-gray-900">Troca #{exchange.id.slice(0, 8)}</p>
-                  <p className="text-sm text-gray-500">Papel: {exchange.role === 'owner' ? 'Dono' : 'Solicitante'}</p>
+              <div key={exchange.id} className="flex items-center justify-between p-4 bg-gray-50 rounded-xl border border-gray-100 hover:border-gray-200 transition-colors">
+                <div className="flex-1">
+                  <div className="flex items-center gap-3">
+                    <span className="text-xl">{getExchangeStatusIcon(exchange.exchange_status)}</span>
+                    <div>
+                      <p className="font-semibold text-gray-900">Troca #{exchange.id.slice(0, 8)}</p>
+                      <p className="text-xs text-gray-500">
+                        {exchange.role === 'owner' ? 'Você é o Dono' : 'Você é o Requester'} · {formatDate(exchange.created_at || exchange.createdAt)}
+                      </p>
+                    </div>
+                  </div>
                 </div>
-                <span className={`px-3 py-1 rounded-full text-xs font-bold ${
-                  exchange.exchange_status === 'FINALIZED'  ? 'bg-green-100 text-green-700' :
-                  exchange.exchange_status === 'pending'    ? 'bg-amber-100 text-amber-700' :
-                  exchange.exchange_status === 'cancelled'  ? 'bg-red-100 text-red-700' :
-                  'bg-blue-100 text-blue-700'
-                }`}>
-                  {exchange.exchange_status}
-                </span>
+                <div className="flex items-center gap-3 ml-4">
+                  {exchange.offered_week_name && (
+                    <div className="text-right hidden sm:block">
+                      <p className="text-xs text-gray-500">Resort oferecido</p>
+                      <p className="text-sm font-medium text-gray-700">{exchange.offered_week_name.slice(0, 15)}...</p>
+                    </div>
+                  )}
+                  <span className={`px-3 py-1.5 rounded-full text-xs font-bold whitespace-nowrap ${getExchangeStatusColor(exchange.exchange_status)}`}>
+                    {exchange.exchange_status === 'FINALIZED' ? 'Finalizada' :
+                     exchange.exchange_status === 'pending' ? 'Pendente' :
+                     exchange.exchange_status === 'CONFIRMED' ? 'Confirmada' :
+                     exchange.exchange_status === 'cancelled' ? 'Cancelada' :
+                     exchange.exchange_status}
+                  </span>
+                </div>
               </div>
             ))}
           </div>

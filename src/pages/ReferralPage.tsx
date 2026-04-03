@@ -19,7 +19,10 @@ export function ReferralPage({ userId }: ReferralPageProps) {
     return () => unsubscribe();
   }, [userId]);
 
-  const referralLink = `${window.location.origin}/login?ref=${userData?.referral_code}`;
+  const referralCode = userData?.referral_code || '';
+  const referralLink = referralCode
+    ? `${window.location.origin}/login?ref=${referralCode}`
+    : `${window.location.origin}/login`;
 
   const handleCopy = () => {
     navigator.clipboard.writeText(referralLink);
@@ -130,7 +133,7 @@ export function ReferralPage({ userId }: ReferralPageProps) {
         <div className="mt-3 flex items-center gap-2">
           <span className="text-xs text-gray-400">Seu código:</span>
           <span className="text-sm font-black text-indigo-600 bg-indigo-50 px-2 py-1 rounded-lg">
-            {userData?.referral_code}
+            {referralCode || <span className="text-gray-400 italic">gerando...</span>}
           </span>
         </div>
       </div>

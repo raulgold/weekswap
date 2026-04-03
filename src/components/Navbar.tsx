@@ -1,25 +1,29 @@
 import { useState } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { User } from 'firebase/auth';
-import { ArrowLeftRight, Calendar, LayoutDashboard, LogOut, Gift, Globe, ChevronDown } from 'lucide-react';
+import { ArrowLeftRight, Calendar, LayoutDashboard, LogOut, Gift, Globe, ChevronDown, Menu, X, UserCircle, Shield } from 'lucide-react';
 import { useLanguage } from '../lib/LanguageContext';
 import type { Language, Currency } from '../lib/i18n';
 
 interface NavbarProps {
   user: User;
   onLogout: () => void;
+  isAdmin?: boolean;
 }
 
-export function Navbar({ user, onLogout }: NavbarProps) {
+export function Navbar({ user, onLogout, isAdmin }: NavbarProps) {
   const location = useLocation();
   const { lang, currency, setLang, setCurrency, t } = useLanguage();
   const [showLangMenu, setShowLangMenu] = useState(false);
+  const [mobileMenuOpen, setMobileMenuOpen] = useState(false);
 
   const links = [
     { to: '/',          label: t('nav.dashboard'), icon: LayoutDashboard },
     { to: '/weeks',     label: t('nav.weeks'),     icon: Calendar },
     { to: '/exchanges', label: t('nav.exchanges'), icon: ArrowLeftRight },
     { to: '/indicacao', label: t('nav.referral'),  icon: Gift },
+    { to: '/profile',   label: 'Perfil',           icon: UserCircle },
+    ...(isAdmin ? [{ to: '/admin', label: 'Admin', icon: Shield }] : []),
   ];
 
   return (
@@ -28,7 +32,7 @@ export function Navbar({ user, onLogout }: NavbarProps) {
         <div className="flex items-center justify-between h-16">
 
           {/* Logo + links */}
-          <div className="flex items-center gap-8">
+          <div className="flex items-center gap-4 sm:gap-8">
             <Link to="/" className="text-xl font-black text-indigo-600">
               WeekSwap
             </Link>
@@ -46,6 +50,14 @@ export function Navbar({ user, onLogout }: NavbarProps) {
                 </Link>
               ))}
             </div>
+
+            {/* Mobile menu button */}
+            <button
+              onClick={() => setMobileMenuOpen(!mobileMenuOpen)}
+              className="sm:hidden flex items-center justify-center w-10 h-10 rounded-lg text-gray-500 hover:bg-gray-50 transition-colors"
+            >
+              {mobileMenuOpen ? <X size={20} /> : <Menu size={20} />}
+            </button>
           </div>
 
           {/* Direita: idioma + moeda + email + sair */}
@@ -108,6 +120,29 @@ export function Navbar({ user, onLogout }: NavbarProps) {
           </div>
         </div>
       </div>
+
+      {/* Mobile menu */}
+      {mobileMenuOpen && (
+        <div className="sm:hidden border-t border-gray-200 bg-white">
+          <div className="px-4 py-3 space-y-2">
+            {links.map(({ to, label, icon: Icon }) => (
+              <Link
+                key={to}
+                to={to}
+                onClick={() => setMobileMenuOpen(false)}
+                className={`flex items-center gap-2 w-full px-4 py-2 rounded-lg text-sm font-medium transition-colors ${
+                  location.pathname === to
+                    ? 'bg-indigo-50 text-indigo-700'
+                    : 'text-gray-500 hover:text-gray-700 hover:bg-gray-50'
+                }`}
+              >
+                <Icon size={16} />
+                {label}
+              </Link>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Overlay para fechar dropdown */}
       {showLangMenu && (

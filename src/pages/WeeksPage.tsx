@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import { motion, AnimatePresence } from 'framer-motion';
 import {
   Calendar, MapPin, Plus, X, Users, Home, Star,
@@ -54,6 +54,11 @@ export function WeeksPage({ userId }: WeeksPageProps) {
   const [error, setError]         = useState('');
   const [showWeekSelectId, setShowWeekSelectId] = useState<string | null>(null);
   const [selectedMyWeekId, setSelectedMyWeekId] = useState<string>('');
+
+  // Filtros de busca
+  const [searchQuery, setSearchQuery] = useState('');
+  const [filterSeason, setFilterSeason] = useState('');
+  const [filterStars, setFilterStars] = useState('');
 
   // PDF upload
   const contractRef = useRef<HTMLInputElement>(null);
@@ -127,9 +132,28 @@ export function WeeksPage({ userId }: WeeksPageProps) {
     e.preventDefault();
     setError('');
     setPdfError('');
+
+    // Validações básicas obrigatórias
     if (!form.resortEntregue) { setError('Apenas resorts entregues e em pleno funcionamento podem ser cadastrados.'); return; }
     if (!form.temporada)      { setError('Selecione a temporada'); return; }
     if (!form.tipoUnidade)    { setError('Selecione o tipo de unidade'); return; }
+
+    // Validações de datas
+    if (!form.checkIn) { setError('Data de check-in é obrigatória'); return; }
+    if (!form.checkOut) { setError('Data de check-out é obrigatória'); return; }
+
+    const checkInDate = new Date(form.checkIn);
+    const checkOutDate = new Date(form.checkOut);
+    const today = new Date();
+    today.setHours(0, 0, 0, 0);
+
+    if (checkInDate < today) { setError('Check-in deve ser no futuro'); return; }
+    if (checkOutDate <= checkInDate) { setError('Check-out deve ser após o check-in'); return; }
+
+    const durationDays = Math.ceil((checkOutDate.getTime() - checkInDate.getTime()) / (1000 * 60 * 60 * 24));
+    if (durationDays < 5) { setError('Duração mínima deve ser 5 dias'); return; }
+
+    // Validações de documentos
     if (!contractFile)        { setError('O upload do contrato da cota (PDF) é obrigatório.'); return; }
     if (!proofFile)           { setError('O upload do comprovante do resort ativo (PDF) é obrigatório.'); return; }
     if (!form.authLetterAccepted) { setError('Você precisa aceitar a carta de autorização digital.'); return; }
@@ -163,7 +187,13 @@ export function WeeksPage({ userId }: WeeksPageProps) {
       fetchWeeks();
       setShowAuthLetter(true);
     } catch (err: any) {
-      setError(err.message || 'Erro ao publicar semana');
+      const errMsg = err.message || 'Erro ao publicar semana';
+      // Detectar se é erro de duplicata
+      if (errMsg.includes('já tem essa semana cadastrada') || errMsg.includes('número de certificado')) {
+        setError('⚠️ ' + errMsg);
+      } else {
+        setError(errMsg);
+      }
     } finally {
       setSubmitting(false);
     }
@@ -263,7 +293,63 @@ export function WeeksPage({ userId }: WeeksPageProps) {
     </div>
   );
 
-  const displayWeeks = tab === 'disponiveis' ? allWeeks : myWeeks;
+  // Filtragem de semanas disponíveis
+  const filteredWeeks = useMemo(() => {
+    const weeks = tab === 'disponiveis' ? allWeeks : myWeeks;
+    
+    if (tab === 'minhas') return weeks;
+    
+    return weeks.filter(w => {
+      const matchSearch = !searchQuery || 
+        w.resort?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        w.cidade?.toLowerCase().includes(searchQuery.toLowerCase()) ||
+        w.estado?.toLowerCase().includes(searchQuery.toLowerCase());
+      const matchSeason = !filterSeason || w.temporada === filterSeason;
+      const matchStars = !filterStars || (w.estrelas || 0) >= parseInt(filterStars);
+      return matchSearch && matchSeason && matchStars;
+    });
+  }, [allWeeks, myWeeks, tab, searchQuery, filterSeason, filterStars]);
+
+  // Ordenação: Gold primeiro, depois mais recentes
+  const displayWeeks = useMemo(() => {
+    const sorted = [...filteredWeeks];
+    sorted.sort((a, b) => {
+      const aGold = a.is_gold_active ? 1 : 0;
+      const bGold = b.is_gold_active ? 1 : 0;
+      if (aGold !== bGold) return bGold - aGold;
+      return new Date(b.created_at || '').getTime() - new Date(a.created_at || '').getTime();
+    });
+    return sorted;
+  }, [filteredWeeks]);
+
+
+  // Helper functions para visual premium
+  const getStateGradient = (estado: string): string => {
+    const gradients: Record<string, string> = {
+      'SC': 'bg-gradient-to-br from-blue-600 to-cyan-400',
+      'RJ': 'bg-gradient-to-br from-green-600 to-emerald-400',
+      'SP': 'bg-gradient-to-br from-gray-700 to-slate-500',
+      'BA': 'bg-gradient-to-br from-yellow-500 to-orange-400',
+      'PE': 'bg-gradient-to-br from-orange-600 to-red-400',
+      'CE': 'bg-gradient-to-br from-yellow-400 to-amber-500',
+      'ES': 'bg-gradient-to-br from-teal-500 to-green-400',
+      'PR': 'bg-gradient-to-br from-green-700 to-teal-500',
+      'MG': 'bg-gradient-to-br from-purple-600 to-indigo-400',
+    };
+    return gradients[estado] || 'bg-gradient-to-br from-indigo-600 to-purple-500';
+  };
+
+  const getSeasonBadge = (temporada: string): string => {
+    if (temporada === 'alta') return 'bg-red-100 text-red-700';
+    if (temporada === 'média' || temporada === 'media') return 'bg-orange-100 text-orange-700';
+    return 'bg-green-100 text-green-700';
+  };
+
+  const formatDateBR = (dateStr: string): string => {
+    if (!dateStr) return '';
+    const [y, m, d] = dateStr.split('-');
+    return `${d}/${m}/${y}`;
+  };
 
   return (
     <div className="space-y-6">
@@ -417,6 +503,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
               <div>
                 <label className="block text-sm font-medium text-gray-700 mb-1">Data Check-in *</label>
                 <input type="date" value={form.checkIn} onChange={e => set('checkIn', e.target.value)}
+                  min={new Date().toISOString().split('T')[0]}
                   className="w-full px-4 py-3 border border-gray-200 rounded-xl focus:ring-2 focus:ring-indigo-500 outline-none" required />
               </div>
               <div>
@@ -552,7 +639,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
       </AnimatePresence>
 
       {/* Tabs */}
-      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl w-fit">
+      <div className="flex gap-2 bg-gray-100 p-1 rounded-xl w-fit mb-6">
         <button
           onClick={() => setTab('disponiveis')}
           className={`px-4 py-2 rounded-lg text-sm font-bold transition-colors ${tab === 'disponiveis' ? 'bg-white text-indigo-600 shadow-sm' : 'text-gray-500 hover:text-gray-700'}`}
@@ -567,10 +654,43 @@ export function WeeksPage({ userId }: WeeksPageProps) {
         </button>
       </div>
 
-      {/* Lista de semanas */}
-      <div className="space-y-4">
+      {/* Filtros (apenas aba Disponíveis) */}
+      {tab === 'disponiveis' && (
+        <div className="flex flex-wrap gap-3 mb-6">
+          <input
+            type="text"
+            placeholder="🔍 Buscar cidade ou resort..."
+            value={searchQuery}
+            onChange={e => setSearchQuery(e.target.value)}
+            className="flex-1 min-w-[200px] px-4 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          />
+          <select
+            value={filterSeason}
+            onChange={e => setFilterSeason(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <option value="">Temporada</option>
+            <option value="alta">Alta</option>
+            <option value="media">Média</option>
+            <option value="baixa">Baixa</option>
+          </select>
+          <select
+            value={filterStars}
+            onChange={e => setFilterStars(e.target.value)}
+            className="px-3 py-2 rounded-xl border border-gray-200 text-sm focus:outline-none focus:ring-2 focus:ring-indigo-400"
+          >
+            <option value="">Estrelas</option>
+            <option value="5">⭐⭐⭐⭐⭐</option>
+            <option value="4">⭐⭐⭐⭐+</option>
+            <option value="3">⭐⭐⭐+</option>
+          </select>
+        </div>
+      )}
+
+      {/* Grid de semanas */}
+      <div className={tab === 'disponiveis' ? "grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6" : "space-y-4"}>
         {displayWeeks.length === 0 ? (
-          <div className="text-center py-16 bg-white rounded-2xl border border-gray-100">
+          <div className="text-center py-16 bg-white rounded-2xl border border-gray-100 col-span-full">
             <Calendar size={40} className="mx-auto text-gray-300 mb-3" />
             <p className="text-gray-400 font-medium">
               {tab === 'disponiveis' ? 'Nenhuma semana disponível para troca' : 'Você ainda não publicou nenhuma semana'}
@@ -593,63 +713,81 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                 layout
                 initial={{ opacity: 0, y: 10 }}
                 animate={{ opacity: 1, y: 0 }}
-                className={`bg-white rounded-2xl shadow-sm border overflow-hidden ${isGold ? 'border-yellow-400 ring-2 ring-yellow-300' : 'border-gray-100'}`}
+                className="group relative bg-white rounded-2xl overflow-hidden shadow-md hover:shadow-xl transition-all duration-300 border border-gray-100"
               >
-                {/* Faixa Modo Ouro */}
-                {isGold && (
-                  <div className="bg-gradient-to-r from-yellow-400 to-amber-400 px-4 py-1.5 flex items-center gap-2">
-                    <Star size={14} className="text-white fill-white animate-pulse" />
-                    <span className="text-white text-xs font-black tracking-wide">⭐ MODO OURO — DESTAQUE PREMIUM</span>
-                  </div>
-                )}
-
-                <div className="p-5">
-                  <div className="flex items-start justify-between gap-4">
-                    <div className="flex-1">
-                      <div className="flex items-center gap-2 flex-wrap">
-                        <h3 className="text-lg font-black text-gray-900">{week.resort}</h3>
-                        {isGold && (
-                          <span className="inline-flex items-center gap-1 bg-yellow-100 text-yellow-700 text-xs font-bold px-2 py-0.5 rounded-full border border-yellow-300">
-                            <Star size={10} className="fill-yellow-600" /> Ouro
-                          </span>
-                        )}
-                      </div>
-                      <div className="flex items-center gap-1 text-gray-500 text-sm mt-1">
-                        <MapPin size={13} />
-                        {week.cidade}, {week.estado}
-                      </div>
-                      <div className="flex items-center gap-4 mt-2 flex-wrap text-sm text-gray-600">
-                        <span className="flex items-center gap-1"><Calendar size={13} /> {week.check_in} → {week.check_out}</span>
-                        <span className="flex items-center gap-1"><Users size={13} /> {week.capacidade} pessoas</span>
-                        <span className={`font-semibold ${TEMPORADAS.find(t => t.value === week.temporada)?.color || ''}`}>
-                          {TEMPORADAS.find(t => t.value === week.temporada)?.label || week.temporada}
-                        </span>
-                      </div>
-                      {week.week_points && (
-                        <div className="flex items-center gap-2 mt-2">
-                          <span className="inline-flex items-center gap-1 bg-indigo-50 text-indigo-700 text-xs font-bold px-2.5 py-1 rounded-full border border-indigo-200">
-                            <Star size={10} className="fill-indigo-500" />
-                            {week.week_points.toLocaleString('pt-BR')} pts
-                          </span>
-                          {week.week_label && (
-                            <span className="text-xs font-semibold text-gray-500 bg-gray-100 px-2 py-0.5 rounded-full">
-                              {week.week_label}
-                            </span>
-                          )}
-                          {week.estrelas && (
-                            <span className="text-xs text-yellow-600 font-semibold">
-                              {'★'.repeat(Number(week.estrelas))}{'☆'.repeat(5 - Number(week.estrelas))}
-                            </span>
-                          )}
-                        </div>
-                      )}
+                {/* Cabeçalho colorido por estado */}
+                <div className={`relative h-44 flex items-end p-4 ${getStateGradient(week.estado)}`}>
+                  {/* Badge Gold */}
+                  {isGold && (
+                    <div className="absolute top-3 left-3 bg-yellow-400 text-yellow-900 text-xs font-black px-2 py-1 rounded-full flex items-center gap-1 shadow-md">
+                      ⭐ DESTAQUE
                     </div>
+                  )}
+                  {/* Badge Temporada */}
+                  <div className={`absolute top-3 right-3 text-xs font-bold px-2 py-1 rounded-full ${getSeasonBadge(week.temporada)}`}>
+                    {week.temporada?.toUpperCase()}
+                  </div>
+                  {/* Nome do resort */}
+                  <div>
+                    <h3 className="text-white font-black text-lg leading-tight drop-shadow-lg">{week.resort}</h3>
+                    <p className="text-white/80 text-sm mt-0.5">📍 {week.cidade}, {week.estado}</p>
+                  </div>
+                </div>
+                
+                {/* Corpo do card */}
+                <div className="p-4">
+                  {/* Estrelas */}
+                  <div className="flex items-center gap-0.5 mb-3">
+                    {[1,2,3,4,5].map(s => (
+                      <span key={s} className={s <= (week.estrelas||0) ? 'text-yellow-400' : 'text-gray-200'}>★</span>
+                    ))}
+                    <span className="text-xs text-gray-500 ml-1">{week.avaliacao ? `${week.avaliacao}/5` : ''}</span>
+                  </div>
+                  
+                  {/* Datas e capacidade */}
+                  <div className="flex items-center justify-between text-sm text-gray-600 mb-3">
+                    <span>📅 {formatDateBR(week.check_in)} → {formatDateBR(week.check_out)}</span>
+                    <span>👥 {week.capacidade} pax</span>
+                  </div>
+                  
+                  {/* Tipo de unidade */}
+                  <p className="text-xs text-gray-500 mb-3">{week.tipo_unidade}</p>
+                  
+                  {/* Pontos em destaque */}
+                  <div className="bg-indigo-50 rounded-xl p-3 mb-4">
+                    <div className="flex items-center justify-between">
+                      <div>
+                        <p className="text-xs text-indigo-600 font-medium">Valor da semana</p>
+                        <p className="text-2xl font-black text-indigo-700">{(week.week_points||0).toLocaleString('pt-BR')} pts</p>
+                        {week.week_label && <p className="text-xs text-indigo-500">{week.week_label}</p>}
+                      </div>
+                    </div>
+                  </div>
 
+                  {/* Descrição curtida */}
+                  {week.descricao && (
+                    <p className="text-xs text-gray-600 mb-3 line-clamp-2">{week.descricao}</p>
+                  )}
+                  
+                  {/* Botão solicitar troca ou expandir */}
+                  <div className="space-y-2">
+                    {week.owner_id !== userId && (
+                      <button
+                        onClick={() => handleSolicitarTroca(week.id)}
+                        disabled={requesting === week.id}
+                        className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-bold py-3 rounded-xl transition-colors flex items-center justify-center gap-2 disabled:opacity-50"
+                      >
+                        🔄 Solicitar Troca
+                      </button>
+                    )}
+                    {week.owner_id === userId && (
+                      <div className="w-full text-center text-sm text-gray-400 py-2">Sua semana</div>
+                    )}
                     <button
                       onClick={() => setExpandedId(expandedId === week.id ? null : week.id)}
-                      className="text-gray-400 hover:text-gray-600 flex-shrink-0"
+                      className="w-full text-indigo-600 hover:text-indigo-700 font-semibold py-2 text-sm transition-colors"
                     >
-                      {expandedId === week.id ? <ChevronUp size={20} /> : <ChevronDown size={20} />}
+                      {expandedId === week.id ? 'Ocultar detalhes ▲' : 'Ver detalhes ▼'}
                     </button>
                   </div>
 
@@ -679,8 +817,8 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                             </p>
                           )}
 
-                          {/* Ação: solicitar troca (tab disponíveis) */}
-                          {tab === 'disponiveis' && (
+                          {/* Ação: solicitar troca com seleção (tab disponíveis) */}
+                          {tab === 'disponiveis' && week.owner_id !== userId && (
                             <div className="pt-2">
                               {showWeekSelectId === week.id ? (
                                 <div className="space-y-3">
@@ -690,6 +828,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                                     onChange={e => setSelectedMyWeekId(e.target.value)}
                                     className="w-full px-3 py-2 border border-gray-200 rounded-xl text-sm outline-none focus:ring-2 focus:ring-indigo-500"
                                   >
+                                    <option value="">Selecione uma semana...</option>
                                     {myWeeks.map(mw => (
                                       <option key={mw.id} value={mw.id}>{mw.resort} — {mw.check_in}</option>
                                     ))}
@@ -697,7 +836,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                                   <div className="flex gap-2">
                                     <button
                                       onClick={() => confirmExchange(selectedMyWeekId, week.id)}
-                                      disabled={!!requesting}
+                                      disabled={!!requesting || !selectedMyWeekId}
                                       className="flex-1 bg-indigo-600 text-white py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
                                     >
                                       {requesting ? 'Enviando...' : 'Confirmar Troca'}
@@ -710,16 +849,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
                                     </button>
                                   </div>
                                 </div>
-                              ) : (
-                                <button
-                                  onClick={() => handleSolicitarTroca(week.id)}
-                                  disabled={requesting === week.id}
-                                  className="flex items-center gap-2 bg-indigo-600 text-white px-4 py-2 rounded-xl text-sm font-bold hover:bg-indigo-700 transition-colors disabled:opacity-50"
-                                >
-                                  <ArrowLeftRight size={15} />
-                                  {requesting === week.id ? 'Enviando...' : 'Solicitar Troca'}
-                                </button>
-                              )}
+                              ) : null}
                             </div>
                           )}
 
@@ -753,7 +883,7 @@ export function WeeksPage({ userId }: WeeksPageProps) {
         )}
       </div>
 
-      {/* Modal: Carta de Autorização pós-publicação */}
+            {/* Modal: Carta de Autorização pós-publicação */}
       <AnimatePresence>
         {showAuthLetter && (
           <motion.div

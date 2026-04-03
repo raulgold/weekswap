@@ -1,27 +1,20 @@
 {
-  "name": "WeekSwap",
-  "short_name": "WeekSwap",
-  "description": "Troque semanas de resort com outros membros",
+  "name": "Seu App",
+  "short_name": "App",
   "start_url": "/",
   "display": "standalone",
-  "orientation": "portrait",
-  "background_color": "#0f172a",
-  "theme_color": "#10b981",
-  "lang": "pt-BR",
+  "background_color": "#ffffff",
+  "theme_color": "#000000",
   "icons": [
     {
       "src": "/icon-192.png",
       "sizes": "192x192",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     },
     {
       "src": "/icon-512.png",
       "sizes": "512x512",
-      "type": "image/png",
-      "purpose": "any maskable"
+      "type": "image/png"
     }
-  ],
-  "categories": ["travel", "lifestyle"],
-  "screenshots": []
+  ]
 }
